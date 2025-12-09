@@ -4,6 +4,8 @@
 .vscode/
 *.log
 tests/
+dataset/
+workspace/
 
 # Python
 __pycache__/
