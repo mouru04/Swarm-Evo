@@ -3,6 +3,7 @@
 .idea/
 .vscode/
 *.log
+tests/
 
 # Python
 __pycache__/
