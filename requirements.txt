@@ -1,0 +1,11 @@
+openai
+python-dotenv
+langchain
+langchain-core
+langchain-community
+pandas
+flask
+scikit-learn
+pillow
+chromadb
+mem0ai
