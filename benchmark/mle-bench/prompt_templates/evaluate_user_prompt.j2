@@ -34,15 +34,16 @@ You must rely ONLY on these logs to make a judgement.
 You are an **expert judge for a data science competition**.
 Your job is to evaluate whether the agent's solution executed correctly, produced a submission file, and achieved a measurable validation score.
 
-You MUST output an `EvaluationResult` object in TOON format:
+You MUST output an `EvaluationResult` object in JSON format:
 
-```
-EvaluationResult (
-    is_bug: true | false                // true if logs show errors, exceptions, or failure to run
-    has_csv_submission: true | false    // true if creation of 'submission.csv' is explicitly indicated
-    score: number                       // extracted validation score; null if missing or failure
-    summary: "string"                   // dense, actionable diagnostic summary (3–5 sentences)
-)
+```json
+{
+    "type": "evaluation",
+    "is_bug": true,                   // or false. true if logs show errors, exceptions, or failure to run
+    "has_csv_submission": true,       // or false. true if creation of 'submission.csv' is explicitly indicated
+    "score": 0.85,                    // extracted validation score; null if missing or failure
+    "summary": "string"               // dense, actionable diagnostic summary (3–5 sentences)
+}
 ```
 
 ---
@@ -51,14 +52,14 @@ EvaluationResult (
 
 ### 1. Detecting Bugs
 
-A bug exists (**is_bug: true**) if:
+A bug exists (**is_bug is true**) if:
 
 * Logs contain any Python traceback
 * RuntimeError / ValueError / NameError / ImportError / FileNotFoundError
 * Model training failed to start or crashed
 * Submission step failed
 
-When `is_bug: true`:
+When `is_bug` is true:
 
 * You MUST quote the **exact** error message and line number from logs in the summary.
 * Explain **why** it failed.

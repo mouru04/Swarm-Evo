@@ -29,18 +29,19 @@ Your task is to create the "Ultimate Solution" by selecting the best component (
 - You should mix and match (crossover) to create a stronger hybrid.
 - **Constraint**: Ensure the selected combination is theoretically compatible.
 
-# Output Format: TOON (Strictly Required)
-Output a `GeneSelection` object indicating the Source Solution ID (integer) for each gene field.
+# Output Format: JSON (Strictly Required)
+Output a `GeneSelection` JSON object indicating the Source Solution ID (integer) for each gene field.
 
-```
-GeneSelection (
-    data_source: 1                 // e.g. Solution 1 has the best data pipeline
-    model_source: 2                // e.g. Solution 2 has a better backbone
-    loss_source: 1                 // ...
-    optimizer_source: 3
-    regularization_source: 2
-    initialization_source: 1
-    tricks_source: 3
-    reasoning: "Explanation of why this combination is superior..."
-)
+```json
+{
+    "type": "selection",
+    "data_source": 1,                // e.g. Solution 1 has the best data pipeline
+    "model_source": 2,               // e.g. Solution 2 has a better backbone
+    "loss_source": 1,                // ...
+    "optimizer_source": 3,
+    "regularization_source": 2,
+    "initialization_source": 1,
+    "tricks_source": 3,
+    "reasoning": "Explanation of why this combination is superior..."
+}
 ```

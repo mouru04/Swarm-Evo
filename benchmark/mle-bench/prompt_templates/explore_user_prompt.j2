@@ -15,7 +15,7 @@ You MUST implement a validation strategy (e.g., train/val split or K-Fold CV) to
 - Use this local validation score to guide your improvements.
 
 # Available Tools
-All tools return TOON-formatted ToolObservation.
+All tools return JSON-formatted ToolObservation.
 
 1) list_directory
 input: path
@@ -36,26 +36,28 @@ function: Execute a shell command (stdout/stderr auto-truncated). Returns ShellR
 On failure, tools return ErrorInfo(...).
 
 # Required Output Objects
-You may ONLY output one of the following two objects per turn:
+You may ONLY output one of the following two JSON objects per turn:
 
 ### ActionStep - Execute Tool Call
-```
-ActionStep (
-    task: "Goal of this call (natural language)"
-    tool: "tool_name"
-    input: (
-        param_name: param_value
-    )
-    next_phase: "PLANNING" | "CODING_IMPLEMENTATION" | "VERIFICATION"
-)
+```json
+{
+    "type": "action",
+    "task": "Goal of this call (natural language)",
+    "tool": "tool_name",
+    "input": {
+        "param_name": "param_value"
+    },
+    "next_phase": "PLANNING" | "CODING_IMPLEMENTATION" | "VERIFICATION"
+}
 ```
 
 ### FinalAnswer - Task Complete
 Only output this when `submission.csv` exists and you are done.
-```
-FinalAnswer (
-    summary: "3-5 English sentences summarizing the solution process"
-)
+```json
+{
+    "type": "final",
+    "summary": "3-5 English sentences summarizing the solution process"
+}
 ```
 
 # Task Goal

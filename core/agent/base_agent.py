@@ -1,36 +1,34 @@
+import re
+import json
+import asyncio
+from typing import List, Dict, Any, Optional
+
 from langchain_core.prompts import ChatPromptTemplate
-from utils.toon_format import normalize_toon_output, validate_toon_format, parse_tool_input
+from openai import OpenAI
+
+from core.execution.journal import LoggerSystem
+from utils.json_utils import render_history_json, parse_json_output
+
+
+
+
+class LLMResponse:
+    def __init__(self, raw_output, normalized_output, is_final, final_answer, task, action, tool_input):
+        self.raw_output = raw_output
+        self.normalized_output = normalized_output
+        self.is_final = is_final
+        self.final_answer = final_answer
+        self.task = task
+        self.action = action
+        self.tool_input = tool_input
+
+class AgentSessionResult:
+    def __init__(self, final_answer, history, success):
+        self.final_answer = final_answer
+        self.history = history
+        self.success = success
 
 class BaseReActAgent:
-
-    # 识别 ActionStep(...) / FinalAnswer(...)
-    ACTION_PATTERN = re.compile(
-        r"\A\s*ActionStep\s*\(\s*(?P<content>.*)\)\s*\Z",
-        re.S
-    )
-
-    FINAL_PATTERN = re.compile(
-        r"\A\s*FinalAnswer\s*\(\s*(?P<content>.*)\)\s*\Z",
-        re.S
-    )
-
-    # input: ( key: value )
-    TOON_INPUT_PATTERN = re.compile(
-        r"input\s*:\s*\(\s*(?P<body>.*)\)",
-        re.S
-    )
-
-    # task: "..."
-    TOON_TASK_PATTERN = re.compile(
-        r'task\s*:\s*"(?P<val>.*?)"',
-        re.S
-    )
-
-    # action: "..."
-    TOON_ACTION_PATTERN = re.compile(
-        r'action\s*:\s*"(?P<val>.*?)"',
-        re.S
-    )
 
     def __init__(
         self,
@@ -41,19 +39,34 @@ class BaseReActAgent:
         max_steps: int,
         llm_client: Optional[OpenAI],
         logger: Optional[LoggerSystem],
+        user_prompt_template: str = "explore_user_prompt.j2",
+        accepted_return_types: List[str] = ["final"] 
     ):
+        """
+        Args:
+            accepted_return_types: List of "type" field values that are considered valid final outputs.
+                                   Default is ["final"]. 
+                                   For Select, pass ["selection"]. 
+                                   For Evaluate, pass ["evaluation"].
+                                   "action" is always handled internally as a tool step.
+        """
         self.MAX_LLM_RETRY = 12
+        self.RETRY_BASE_DELAY = 2.0
+        self.MAX_TOOL_RETRY = 5
         
         self.name = name
         self.model = model
         self.max_steps = max_steps
         self.llm_client = llm_client
         self.logger = logger
+        self.user_prompt_template = user_prompt_template
+        self.accepted_return_types = accepted_return_types
 
         # 工具字典
         self.tools: Dict[str, BaseTool] = {tool.name: tool for tool in tools}
 
         # 系统 + 用户提示词模板
+        # Note: prompt_manager will handle the actual content, but we define the strict structure here
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", "{system_instruction}"),
             ("user", "{user_instruction}")
@@ -61,9 +74,11 @@ class BaseReActAgent:
     
     def llm(self, messages: List[Dict[str, str]]) -> LLMResponse:
         """
-        调用 LLM 并解析 TOON 输出：
-        - ActionStep(...)
-        - FinalAnswer(...)
+        调用 LLM 并解析 JSON 输出：
+        - { "type": "action", ... }
+        - { "type": "final", ... }
+        - { "type": "selection", ... }
+        - { "type": "evaluation", ... }
         """
         for attempt in range(1, self.MAX_LLM_RETRY + 1):
             try:
@@ -80,8 +95,10 @@ class BaseReActAgent:
                     raise ValueError("LLM response missing choices")
                 
                 raw_text = getattr(choices[0].message, "content", None)
-                if raw_text is None and isinstance(message, dict):
-                    raw_text = message.get("content")
+                if raw_text is None:
+                     # Fallback for some clients returning dict
+                    raw_text = choices[0].message.get("content")
+
                 if raw_text is None:
                     self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
                     raise ValueError("LLM response missing content")
@@ -89,75 +106,61 @@ class BaseReActAgent:
                     self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
                     raise TypeError("LLM response content type error")
 
-                # TOON 正规化，去除 fenced code
-                normalized = self._normalize_toon_output(raw_text)
-                # 1) FinalAnswer(...)
-                final_match = self.FINAL_PATTERN.fullmatch(normalized)
-                if final_match:
-                    validate_toon_format(normalized, self.logger)
+                # JSON 解析
+                parsed_json = parse_json_output(raw_text)
+                
+                # 检查 type 字段
+                msg_type = parsed_json.get("type")
+                if not msg_type:
+                    raise ValueError("JSON output missing 'type' field")
+
+                # 1) ReAct Action
+                if msg_type == "action":
+                    task = parsed_json.get("task")
+                    tool_name = parsed_json.get("tool")
+                    tool_input = parsed_json.get("input")
+                    
+                    if not tool_name or tool_input is None:
+                         raise ValueError("ActionStep missing tool or input")
+                    
                     return LLMResponse(
                         raw_output=raw_text,
-                        normalized_output=normalized,
+                        normalized_output=json.dumps(parsed_json),
+                        is_final=False,
+                        final_answer=None,
+                        task=task,
+                        action=tool_name,
+                        tool_input=tool_input
+                    )
+                
+                # 2) Final Result (Standard 'final' or custom types like 'selection', 'evaluation')
+                # If the type is known to be a "Return Action", treat it as final answer
+                if msg_type == "final" or msg_type in self.accepted_return_types:
+                    return LLMResponse(
+                        raw_output=raw_text,
+                        normalized_output=json.dumps(parsed_json),
                         is_final=True,
-                        final_answer=normalized,
+                        final_answer=parsed_json, # For JSON mode, final_answer IS the dict object
                         task=None,
                         action=None,
                         tool_input=None
                     )
-                # 2) ActionStep(...)
-                action_match = self.ACTION_PATTERN.fullmatch(normalized)
-                if action_match:
-                    validate_toon_format(normalized, self.logger)
-                    content = action_match.group("content")
-                    
-                    # 提取 task
-                    task_match = self.TOON_TASK_PATTERN.search(content)
-                    if not task_match:
-                        self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，缺乏 task 字段")
-                        raise ValueError("ActionStep missing task field")
-                    task = task_match.group("val")
+                
+                # Unknown type
+                raise ValueError(f"Unknown message type: {msg_type}")
 
-                    # 提取 action
-                    action_match = self.TOON_ACTION_PATTERN.search(content)
-                    if not action_match:
-                        self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，缺乏 action 字段")
-                        raise ValueError("ActionStep missing action field")
-                    action_name = action_match.group("val")
-
-                    # 整段 input: (...)
-                    input_start = content.find("input")
-                    if input_start < 0:
-                        self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，缺乏 input 字段")
-                        raise ValueError("ActionStep missing input field")
-                    tool_input_text = content[input_start:].strip()
-
-                    return LLMResponse(
-                        raw_output=raw_text,
-                        normalized_output=normalized,
-                        is_final=False,
-                        final_answer=None,
-                        task=task,
-                        action=action_name,
-                        tool_input=tool_input_text,
-                    )
-
-                    self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，TOON 格式错误")
-                    raise ValueError("LLM output is neither ActionStep(...) nor FinalAnswer(...)")
             except Exception as exc:
                 if attempt < self.MAX_LLM_RETRY:
                     delay = min(self.RETRY_BASE_DELAY * attempt, 10.0)
-                    self.logger.text_log("WARNING", f"Agent '{self.name}' 调用 LLM 失败，第 {attempt} 次重试，延迟 {delay} 秒")
+                    self.logger.text_log("WARNING", f"Agent '{self.name}' 调用 LLM 失败/解析错误: {exc} | 第 {attempt} 次重试")
                     await asyncio.sleep(delay)
                     continue
                 else:
                     self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，重试次数已达上限")
-                    RuntimeError(f"LLM consecutive requests failed: {exc}")
+                    raise RuntimeError(f"LLM consecutive requests failed: {exc}")
         
     def _react_loop(self, instruction_text: str, prompt_context: PromptContext) -> AgentSessionResult:
-        """
-        将原来的 run() 完整迁移到这里，不对逻辑做任何更改。
-        """
-
+        
         history_records: List[Dict[str, Any]] = []
         consecutive_tool_errors: int = 0
         step: int = 0
@@ -165,10 +168,13 @@ class BaseReActAgent:
         while step < self.max_steps:
             print(f"step: {step}")
 
-            # 平铺历史（TOON）
-            history = render_history(history_records)
+            # 平铺历史（JSON String）
+            history = render_history_json(history_records)
 
             # 第一阶段：构造提示词
+            if hasattr(prompt_context, "template_name"):
+                 prompt_context.template_name = self.user_prompt_template
+            
             user_prompt = self.prompt_manager.build_user_prompt(prompt_context, history)
             system_instruction = self.prompt_manager.build_system_prompt(prompt_context)
 
@@ -183,22 +189,19 @@ class BaseReActAgent:
                 for message in formatted_messages
             ]
 
-            # 第二阶段：调用 LLM（你的 TOON ActionStep/FinalAnswer 解析）
+            # 第二阶段：调用 LLM
             response = self.llm(chat_messages)
 
-            # 第三阶段：FinalAnswer
+            # 第三阶段：Final Answer / Custom Return
             if response.is_final:
                 if response.final_answer is None:
-                    self.logger.text_log("ERROR", "FinalAnswer missing content")
-                    consecutive_tool_errors += 1
-                    if consecutive_tool_errors > self.MAX_TOOL_RETRY:
-                        self.logger.text_log("ERROR", "FinalAnswer missing content and consecutive retries failed")
-                        raise RuntimeError("FinalAnswer missing content and consecutive retries failed")
-                    continue
+                    # Should not happen logic wise if is_final is set correctly
+                    raise RuntimeError("FinalAnswer missing content")
 
+                # Log completion
                 self.logger.json_log({
                     "step": step,
-                    "task": response.task,
+                    "task": "Task Complete",
                     "final_answer": response.final_answer,
                     "action": None,
                     "tool_input": None,
@@ -219,12 +222,10 @@ class BaseReActAgent:
 
                 try:
                     if response.tool_input is None:
-                        self.logger.text_log("ERROR", "Tool input missing")
-                        raise ValueError("Tool input missing")
-
-                    parsed_input, _detected = self._parse_tool_input(response.action, response.tool_input)
-                    normalized_input = self._normalize_tool_input(response.action, parsed_input)
-                    observation = tool.run(normalized_input)
+                         raise ValueError("Tool input missing")
+                    
+                    # JSON mode: tool_input is already a dict (or primitive), direct pass
+                    observation = tool.run(response.tool_input)
 
                 except Exception as e:
                     observation = f"Tool execution failed: {e}"
@@ -243,8 +244,8 @@ class BaseReActAgent:
                 if consecutive_tool_errors > self.MAX_TOOL_RETRY:
                     self.logger.text_log("ERROR", "Consecutive tool failures, terminating")
                     raise RuntimeError(f"Consecutive tool failures, terminating: {observation}")
-
-                # 加入历史记录（错误）
+                
+                 # Log error
                 self.logger.json_log({
                     "step": step,
                     "task": response.task,
@@ -253,13 +254,15 @@ class BaseReActAgent:
                     "tool_input": response.tool_input,
                     "observation": f"Error: {observation}",
                 })
-
+                
+                # Append to history
                 history_records.append({
                     "step": step,
                     "task": response.task,
-                    "action": response.action,
-                    "tool_input": response.tool_input,
+                    "tool": response.action, # Standardize naming in history
+                    "input": response.tool_input,
                     "observation": f"Error: {observation}",
+                    "type": "action"
                 })
                 step += 1
                 continue
@@ -279,42 +282,40 @@ class BaseReActAgent:
             history_records.append({
                 "step": step,
                 "task": response.task,
-                "action": response.action,
-                "tool_input": response.tool_input,
-                "observation": str(observation),
+                "tool": response.action,
+                "input": response.tool_input,
+                "observation": str(observation), # Observation might be object or string
+                "type": "action"
             })
             step += 1
 
         # 超过最大步数
         self.logger.text_log("WARNING", "达到最大 ReAct 步数，任务未完成")
         return AgentSessionResult(
-            final_answer="达到最大 ReAct 步数，任务未完成。",
+            final_answer={"error": "Max steps reached", "success": False},
             history=history_records,
             success=False
         )
     
     def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        LangGraph 节点入口：Agent 被当作节点时会执行这个方法。
-        state 必须包含:
-            - "task_description": str
-            - "prompt_context": PromptContext
+        LangGraph 节点入口
         """
 
         instruction_text = state["task_description"]
         prompt_context = state["prompt_context"]
 
-        # 调用内部 ReAct 推理循环（原 run）
+        # 调用内部 ReAct 推理循环
         session = self._react_loop(instruction_text, prompt_context)
 
-        # 将结果合并回 LangGraph state
         return {
             "agent_output": session.final_answer,
             "agent_history": session.history,
             "agent_success": session.success,
             "agent_name": self.name,
-            "raw_session": session,      # 如果后续节点需要更完整的 session
+            "raw_session": session,
         }
+
 
 
 
