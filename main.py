@@ -78,6 +78,15 @@ async def main_mle_bench_competition() -> None:
         logger.text_log("ERROR", f"获取系统环境信息失败: {e}")
         return
     
+    try:
+        # 第五阶段：创建AgentPool
+        logger.text_log("INFO", "\n[5/7] 创建AgentPool...")
+        agent_pool = AgentPool(llm_client=llm_client, logger=logger)
+        logger.text_log("INFO", "✅ AgentPool 创建成功")
+    except Exception as e:
+        logger.text_log("ERROR", f"AgentPool 创建失败: {e}")
+        return
+    
 
 if __name__ == "__main__":
     print("\n🚀 启动MLE-bench竞赛自主执行系统\n")
