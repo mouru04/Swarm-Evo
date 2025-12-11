@@ -1,5 +1,5 @@
 """
-Journal module for managing the solution search graph (DAG).
+Journal module for managing the solution DAG (Directed Acyclic Graph).
 Stores the history of all generated nodes (solutions) and their relationships.
 """
 
@@ -7,7 +7,6 @@ import uuid
 import json
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any, Set
-from pathlib import Path
 from collections import deque
 
 @dataclass
@@ -31,10 +30,8 @@ class Node:
     
     # Metadata
     step: int = 0  # Global step number when this node was created
-    action_type: str = "draft"  # draft, improve, debug, merge, ensemble
-    
-    # Extra metadata for DAG edge properties or other info
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    action_type: str = "draft"  # draft, improve, debug, merge, etc.
+    metadata: Dict[str, Any] = field(default_factory=dict) # Edge attributes or extra info
     
     children_ids: List[str] = field(default_factory=list)
 
@@ -67,7 +64,7 @@ class Journal:
         self.root_id: Optional[str] = None
 
     def add_node(self, node: Node) -> None:
-        """Adds a new node to the journal."""
+        """Adds a new node to the journal and updates graph connections."""
         self.nodes[node.id] = node
         
         if node.parent_ids:
@@ -98,8 +95,10 @@ class Journal:
 
     def get_trace(self, node_id: str) -> List[Node]:
         """
-        Legacy method: Returns the path from root to the specified node following primary parents.
-        For full DAG history, use get_lineage_subgraph.
+        Returns the primary lineage path from root to the specified node.
+        
+        This follows the first parent at each step, maintaining backward compatibility
+        with tree-based assumptions.
         """
         trace = []
         current_id = node_id
@@ -108,76 +107,54 @@ class Journal:
             if not node:
                 break
             trace.append(node)
-            # Follow primary lineage (first parent)
+            # Follow primary lineage
             current_id = node.parent_id
         return list(reversed(trace))
 
-    def get_lineage_subgraph(self, node_id: str) -> List[Node]:
+    def get_ancestors(self, node_id: str) -> List[Node]:
         """
-        Returns all ancestor nodes of the specified node, plus the node itself.
-        The result is effectively the sub-DAG that led to this node.
+        Returns all ancestor nodes of the specified node, topologically sorted 
+        (ancestors appear before descendants). Includes the node itself.
         """
-        ancestors = set()
-        queue = deque([node_id])
-        
-        while queue:
-            current = queue.popleft()
-            if current in ancestors:
-                continue
+        if node_id not in self.nodes:
+            return []
             
-            node = self.nodes.get(current)
-            if not node:
-                continue
-                
-            ancestors.add(current)
-            for pid in node.parent_ids:
-                queue.append(pid)
-                
-        # Return nodes in original definition order or just list
-        # To be useful, let's return them loosely sorted by step if available, or just as list
-        subgraph_nodes = [self.nodes[nid] for nid in ancestors if nid in self.nodes]
-        return sorted(subgraph_nodes, key=lambda n: n.step)
-
-    def get_ancestors(self, node_id: str) -> Set[str]:
-        """Returns a set of all ancestor IDs."""
-        ancestors = set()
-        queue = deque([node_id])
-        while queue:
-            curr = queue.popleft()
-            node = self.nodes.get(curr)
+        visited = set()
+        sorted_nodes = []
+        
+        def visit(nid):
+            if nid in visited:
+                return
+            visited.add(nid)
+            node = self.nodes.get(nid)
             if node:
                 for pid in node.parent_ids:
-                    if pid not in ancestors:
-                        ancestors.add(pid)
-                        queue.append(pid)
-        return ancestors
+                    visit(pid)
+                sorted_nodes.append(node)
+        
+        visit(node_id)
+        return sorted_nodes
 
     def get_topological_sort(self) -> List[Node]:
-        """Returns all nodes in topological order."""
-        # Calculate in-degrees (number of parents)
-        in_degree = {nid: 0 for nid in self.nodes}
-        for node in self.nodes.values():
-            for child_id in node.children_ids:
-                if child_id in in_degree: # Sanity check
-                    in_degree[child_id] += 1
+        """Returns a topological sort of all nodes in the graph."""
+        visited = set()
+        stack = []
         
-        # Queue for nodes with in-degree 0
-        queue = deque([nid for nid, deg in in_degree.items() if deg == 0])
-        result = []
-        
-        while queue:
-            nid = queue.popleft()
-            if nid not in self.nodes:
-                continue
-            node = self.nodes[nid]
-            result.append(node)
-            
+        def dfs(nid):
+            visited.add(nid)
+            node = self.nodes.get(nid)
+            if not node: return
             for child_id in node.children_ids:
-                in_degree[child_id] -= 1
-                if in_degree[child_id] == 0:
-                    queue.append(child_id)
-                    
-        return result
+                if child_id not in visited:
+                    dfs(child_id)
+            stack.append(node)
+
+        # Iterate over all nodes to ensure we cover disconnected components
+        for nid in self.nodes:
+            if nid not in visited:
+                dfs(nid)
+        
+        return stack[::-1]
 
     def save_to_file(self, path: str) -> None:
         """Saves the entire journal to a JSON file."""
