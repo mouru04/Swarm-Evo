@@ -7,7 +7,7 @@ from pathlib import Path
 from utils.config import get_config
 from utils.system_info import get_conda_packages
 from utils.build_workspace import build_workspace
-from utils.logger_system import LoggerSystem, init_logger, logger
+from utils.logger_system import LoggerSystem, init_logger, logger, log_msg
 from core.agent.agent_pool import AgentPool
 from utils.logger_system import logger as global_logger 
 
