@@ -4,9 +4,11 @@ import asyncio
 from typing import List, Dict, Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain.tools import BaseTool
 from openai import OpenAI
 
-from core.execution.journal import LoggerSystem
+from core.agent.prompt_manager import PromptManager, PromptContext
+from utils.logger_system import LoggerSystem
 from utils.json_utils import render_history_json, parse_json_output
 
 
@@ -72,7 +74,7 @@ class BaseReActAgent:
             ("user", "{user_instruction}")
         ])
     
-    def llm(self, messages: List[Dict[str, str]]) -> LLMResponse:
+    async def llm(self, messages: List[Dict[str, str]]) -> LLMResponse:
         """
         调用 LLM 并解析 JSON 输出：
         - { "type": "action", ... }
@@ -159,7 +161,7 @@ class BaseReActAgent:
                     self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，重试次数已达上限")
                     raise RuntimeError(f"LLM consecutive requests failed: {exc}")
         
-    def _react_loop(self, instruction_text: str, prompt_context: PromptContext) -> AgentSessionResult:
+    async def _react_loop(self, instruction_text: str, prompt_context: PromptContext) -> AgentSessionResult:
         
         history_records: List[Dict[str, Any]] = []
         consecutive_tool_errors: int = 0
@@ -190,7 +192,7 @@ class BaseReActAgent:
             ]
 
             # 第二阶段：调用 LLM
-            response = self.llm(chat_messages)
+            response = await self.llm(chat_messages)
 
             # 第三阶段：Final Answer / Custom Return
             if response.is_final:
@@ -297,7 +299,7 @@ class BaseReActAgent:
             success=False
         )
     
-    def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
         LangGraph 节点入口
         """
@@ -306,7 +308,7 @@ class BaseReActAgent:
         prompt_context = state["prompt_context"]
 
         # 调用内部 ReAct 推理循环
-        session = self._react_loop(instruction_text, prompt_context)
+        session = await self._react_loop(instruction_text, prompt_context)
 
         return {
             "agent_output": session.final_answer,

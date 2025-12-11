@@ -79,6 +79,8 @@ class Config:
         self.random_seed = self._get_required_int_env('RANDOM_SEED')
         self.max_concurrent_agents = self._get_required_int_env('MAX_CONCURRENT_AGENTS')
         self.agent_timeout = self._get_required_int_env('AGENT_TIMEOUT')
+        self.agent_num = self._get_required_int_env('AGENT_NUM')
+        self.agent_config_dir = self._get_required_env('AGENT_CONFIG_DIR')
 
         # 第四阶段：MLE-bench配置
         self.mle_bench_competition = self._get_required_env('MLE_BENCH_COMPETITION')

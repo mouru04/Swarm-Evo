@@ -1,0 +1,9 @@
+{
+    "model_type": "glm-4.6",
+    "max_steps": 16,
+    "tool_config": [],
+    "model_config_dict": {
+        "temperature": 0.2,
+        "max_tokens": 65536
+    }
+}

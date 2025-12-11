@@ -1,3 +1,24 @@
+import json
+from typing import Dict, List, Any, Optional
+
+from core.agent.base_agent import BaseReActAgent
+from core.agent.prompt_manager import PromptManager
+from core.agent.safe_tools_toon import SafeListDirectoryTool, SafeReadFileTool, SafeShellTool, SafeWriteFileTool
+
+def load_tools(tool_config: List[Dict], conda_env_name: str) -> List[Any]:
+    """
+    Load tools based on configuration.
+    Currently returns a default set of safe tools.
+    """
+    # Simply return the default safe tools for now as per current requirement
+    # In the future, this can be enhanced to use tool_config to filter/configure tools
+    return [
+        SafeListDirectoryTool(),
+        SafeReadFileTool(),
+        SafeWriteFileTool(),
+        SafeShellTool(conda_env_name=conda_env_name)
+    ]
+
 class AgentPool:
     """
     AgentPool (Registry Version for LangGraph):

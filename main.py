@@ -1,12 +1,15 @@
 import asyncio
 import shutil
 import os
+import json
 from pathlib import Path
 
 from utils.config import get_config
 from utils.system_info import get_conda_packages
 from utils.build_workspace import build_workspace
 from utils.logger_system import LoggerSystem
+from core.agent.agent_pool import AgentPool
+
 
 async def main_mle_bench_competition() -> None:
     """
@@ -81,8 +84,30 @@ async def main_mle_bench_competition() -> None:
     try:
         # 第五阶段：创建AgentPool
         logger.text_log("INFO", "\n[5/7] 创建AgentPool...")
-        agent_pool = AgentPool(llm_client=llm_client, logger=logger)
-        logger.text_log("INFO", "✅ AgentPool 创建成功")
+        
+        # 1. 初始化 LLM 客户端
+        llm_client = config.create_llm_client()
+
+        # 2. 读取 Agent 配置
+        agent_config_path = Path("core/config/agent.json")
+        if not agent_config_path.exists():
+             raise FileNotFoundError(f"Agent配置文件未找到: {agent_config_path}")
+        
+        with open(agent_config_path, "r", encoding="utf-8") as f:
+            agent_config_dict = json.load(f)
+
+        # 3. 补充环境配置
+        agent_config_dict["conda_env_name"] = config.conda_env_name
+
+        # 4. 批量创建并注册
+        agent_pool = AgentPool.from_configs(
+            agents_num=config.agent_num,
+            config=agent_config_dict,
+            llm_client=llm_client,
+            logger=logger
+        )
+        
+        logger.text_log("INFO", f"✅ AgentPool 创建成功, 已注册 {config.agent_num} 个 Agent")
     except Exception as e:
         logger.text_log("ERROR", f"AgentPool 创建失败: {e}")
         return
