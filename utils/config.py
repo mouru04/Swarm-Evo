@@ -94,6 +94,11 @@ class Config:
         # 第五阶段：Conda环境配置
         self.conda_env_name = self._get_required_env('CONDA_ENV_NAME')
 
+        # 第六阶段：任务执行配置
+        self.init_task_num = self._get_required_int_env('INIT_TASK_NUM')
+        self.explore_ratio = self._get_required_float_env('EXPLORE_RATIO')
+        self.step_task_num = self._get_required_int_env('STEP_TASK_NUM')
+
         self._initialized = True
 
     def _get_required_env(self, key: str) -> str:
@@ -126,6 +131,22 @@ class Config:
             return int(value_str)
         except ValueError as exc:
             log_msg("ERROR", f"{key}必须为整数，当前值为{value_str}")
+
+    def _get_required_float_env(self, key: str) -> float:
+        """
+        读取必需的浮点数环境变量，包含数值合法性校验
+
+        参数:
+            key: 环境变量名称
+
+        返回:
+            float: 转换后的浮点数值
+        """
+        value_str = self._get_required_env(key)
+        try:
+            return float(value_str)
+        except ValueError as exc:
+            log_msg("ERROR", f"{key}必须为浮点数，当前值为{value_str}")
 
     def validate(self) -> tuple[bool, str]:
         """
