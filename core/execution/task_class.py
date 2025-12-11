@@ -9,3 +9,4 @@ class Task(TypedDict):
     status: str # "pending", "running", "completed", "failed"
     created_at: float
     agent_name: Optional[str] # 分配给哪个 Agent
+    dependencies: Optional[Dict[str, str]] # 依赖的任务 ID，例如 {"gene_plan_source": "task_123"}

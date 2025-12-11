@@ -119,14 +119,14 @@ async def main_mle_bench_competition() -> None:
         # 第六阶段：创建IterationController并运行竞赛
         log_msg("INFO", "\n[6/7] 启动竞赛循环...")
 
-        # 1. 创建 Pipeline
-        pipeline = Pipeline()
-        pipeline.initialize()
-        log_msg("INFO", "✅ Pipeline 初始化完成")
-
-        # 2. 创建 Journal
+        # 1. 创建 Journal
         journal = Journal()
         log_msg("INFO", "✅ Journal 初始化完成")
+
+        # 2. 创建 Pipeline
+        pipeline = Pipeline(journal)
+        pipeline.initialize()
+        log_msg("INFO", "✅ Pipeline 初始化完成")
 
         # 3. 创建 Controller
         controller = IterationController(

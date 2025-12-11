@@ -43,7 +43,7 @@ class BaseReActAgent:
         llm_client: Optional[OpenAI],
         # logger: Optional[LoggerSystem], # Removed
         user_prompt_template: str = "explore_user_prompt.j2",
-        accepted_return_types: List[str] = ["final"] 
+        accepted_return_types: List[str] = ["final", "selection", "review","evaluation"] 
     ):
         """
         Args:
@@ -174,10 +174,6 @@ class BaseReActAgent:
 
             # 平铺历史（JSON String）
             history = render_history_json(history_records)
-
-            # 第一阶段：构造提示词
-            if hasattr(prompt_context, "template_name"):
-                 prompt_context.template_name = self.user_prompt_template
             
             user_prompt = self.prompt_manager.build_user_prompt(prompt_context, history)
             system_instruction = self.prompt_manager.build_system_prompt(prompt_context)

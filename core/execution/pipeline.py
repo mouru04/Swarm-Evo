@@ -5,6 +5,7 @@ from threading import Lock
 from typing import List, Optional, Dict, Any
 
 from core.execution.task_class import Task
+from core.execution.journal import Journal, Node
 from utils.config import get_config
 from utils.logger_system import log_msg
 
@@ -17,9 +18,11 @@ class Pipeline:
     支持多线程并发访问。
     """
 
-    def __init__(self):
+    def __init__(self, journal: Journal):
         self.lock = Lock()
         self.tasks: List[Task] = []
+        self.temporary_storage: Dict[str, Any] = {}
+        self.journal = journal
         self.config = get_config()
 
     def initialize(self):
@@ -42,7 +45,8 @@ class Pipeline:
             payload=payload or {},
             status="pending",
             created_at=time.time(),
-            agent_name=None
+            agent_name=None,
+            dependencies=None
         )
 
     def add_task(self, task: Task):
@@ -58,6 +62,13 @@ class Pipeline:
         """
         self.tasks.append(task)
         # log_msg("DEBUG", f"Task {task['id']} (type={task['type']}) added to pipeline.")
+
+    def _prepend_task_internal(self, task: Task):
+        """
+        内部优先添加任务方法（添加到队首，不加锁）
+        """
+        self.tasks.insert(0, task)
+        # log_msg("DEBUG", f"Task {task['id']} (type={task['type']}) prepended to pipeline.")
 
     def get_task(self) -> Optional[Task]:
         """
@@ -112,14 +123,23 @@ class Pipeline:
         with self.lock:
             self.tasks.sort(key=lambda t: t['created_at'])
 
-    def complete_task(self, task_id: str):
+    def complete_task(self, task_id: str, result_node: Optional[Node] = None, update_data: Optional[Dict[str, Any]] = None):
         """
         完成一个任务，并根据特定规则添加后续任务。
         
+        Args:
+            task_id: 任务 ID
+            result_node: 如果是 explore/merge 任务，传入新创建的 Node 对象
+            update_data: 如果是 review 任务，传入更新数据 (score, summary, etc.)
+        
         规则:
-        - explore -> review
-        - select -> merge
-        - merge -> review
+        - explore -> review (Priority Insert)
+        - select -> merge (Priority Insert) -> Merge 任务创建逻辑在此处或 Controller 触发，但在 V4 规划中建议由 Controller 根据结果触发或此处检测
+          (根据 V3/V4 混合调整，Select 任务通常已经在 Controller 中被处理生成了 Merge 任务。
+           如果 Pipeline 要完全接管，则需要 Select 的结果传递给这里。
+           为了兼容现有 Controller 逻辑，Select -> Merge 已经在 Controller 中手动 add_task 了。
+           这里主要处理 Explore/Merge -> Review 的自动流转。)
+        - merge -> review (Priority Insert)
         """
         with self.lock:
             # 查找并更新任务状态
@@ -131,21 +151,83 @@ class Pipeline:
             task['status'] = 'completed'
             # log_msg("INFO", f"Task {task_id} completed.")
 
-            # 根据规则添加后续任务
+            # --- Node Logic based on Task Type ---
+            new_node_id = None
+            
+            if task['type'] in ['explore', 'merge']:
+                if result_node:
+                    self.journal.add_node(result_node)
+                    new_node_id = result_node.id
+                    log_msg("INFO", f"Pipeline added Node {new_node_id} for task {task_id}")
+            
+            elif task['type'] == 'review':
+                if update_data:
+                    target_id = task['payload'].get('target_node_id')
+                    if target_id:
+                        node = self.journal.get_node(target_id)
+                        if node:
+                            node.score = update_data.get('score')
+                            node.summary = update_data.get('summary', "")
+                            node.is_buggy = update_data.get('is_bug', False)
+                            node.metadata['review_success'] = update_data.get('agent_success', False)
+                            log_msg("INFO", f"Pipeline updated Node {target_id} with score {node.score}")
+                        else:
+                            log_msg("WARNING", f"Review target node {target_id} not found.")
+
+            # --- Follow-up Task Creation ---
             next_task_type = None
             payload = {"parent_id": task_id}
 
             if task['type'] == 'explore':
                 next_task_type = 'review'
-                payload['review_target'] = 'explore_result' # 示例 payload
+                # Pass the newly created node ID to the review task
+                if new_node_id:
+                    payload['target_node_id'] = new_node_id
+                    payload['template_name'] = "evaluate_user_prompt.j2" # Explicitly set template if needed
+                else:
+                    log_msg("WARNING", "Explore task completed without a result_node. Skipping Review.")
+                    return
+
             elif task['type'] == 'select':
-                next_task_type = 'merge'
-                payload['merge_source'] = 'select_result'
+                # Select -> Merge creation is handled in Controller in current architecture (V3/V4 mix).
+                # If we moved it here, we would need gene_plan in update_data.
+                # Keeping compatibility with Controller handling Select logic for now.
+                pass 
+
             elif task['type'] == 'merge':
                 next_task_type = 'review'
-                payload['review_target'] = 'merge_result'
+                if new_node_id:
+                    payload['target_node_id'] = new_node_id
+                    payload['template_name'] = "evaluate_user_prompt.j2"
+                else:
+                    log_msg("WARNING", "Merge task completed without a result_node. Skipping Review.")
+                    return
             
             if next_task_type:
                 new_task = self._create_task(next_task_type, payload)
-                self._add_task_internal(new_task)
-                # log_msg("INFO", f"Follow-up task {new_task['id']} ({next_task_type}) added.")
+                # 使用优先插入，确保后续任务立即被执行
+                self._prepend_task_internal(new_task)
+                # log_msg("INFO", f"Follow-up task {new_task['id']} ({next_task_type}) prepended for execution.")
+
+    def store_result(self, task_id: str, data: Any):
+        """
+        暂存任务结果
+        """
+        with self.lock:
+            self.temporary_storage[task_id] = data
+
+    def retrieve_result(self, task_id: str, pop: bool = True) -> Any:
+        """
+        获取暂存的任务结果
+        """
+        with self.lock:
+            if pop:
+                return self.temporary_storage.pop(task_id, None)
+            return self.temporary_storage.get(task_id)
+
+    def add_urgent_task(self, task: Task):
+        """
+        添加高优先级任务（插入队首）
+        """
+        with self.lock:
+            self._prepend_task_internal(task)
