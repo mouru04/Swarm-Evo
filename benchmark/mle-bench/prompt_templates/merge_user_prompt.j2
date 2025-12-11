@@ -89,7 +89,41 @@ Refer to the code below to extract the required genes.
 
 # Instruction
 Synthesize the new `solution.py` by strictly following the Crossover Plan above.
+
+**CRITICAL: Strict Structure Preservation**
+Your generated code MUST maintain the same 7-component structure as the parent solutions. You MUST use the same comment tags (e.g. `# [SECTION: DATA]`) and function/class signatures.
+
 1. **Extract**: Copy the relevant code blocks (genes) from the specified Parent Solutions.
-2. **Merge**: Assemble them into a single, cohesive script.
+2. **Merge**: Assemble them into a single, cohesive script using the structure template below.
 3. **Resolve Conflicts**: Fix any variable naming clashes, import errors, or compatibility issues between the different genes.
 4. **Save**: You MUST save the final code to `solution.py`.
+
+**Required Structure Template:**
+```python
+# Imports...
+
+# [SECTION: DATA]
+# ... (From Source {{ gene_plan.data_source }})
+
+# [SECTION: MODEL]
+# ... (From Source {{ gene_plan.model_source }})
+
+# [SECTION: LOSS]
+# ... (From Source {{ gene_plan.loss_source }})
+
+# [SECTION: OPTIMIZER]
+# ... (From Source {{ gene_plan.optimizer_source }})
+
+# [SECTION: REGULARIZATION]
+# ... (From Source {{ gene_plan.regularization_source }})
+
+# [SECTION: INITIALIZATION]
+# ... (From Source {{ gene_plan.initialization_source }})
+
+# [SECTION: TRAINING_TRICKS]
+# ... (From Source {{ gene_plan.tricks_source }})
+
+# [SECTION: MAIN_LOOP]
+if __name__ == "__main__":
+    # Integration logic...
+```

@@ -8,6 +8,8 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any, Set
 from collections import deque
+import re
+import ast
 
 @dataclass
 class Node:
@@ -18,6 +20,7 @@ class Node:
     
     # Code content
     code: str = ""
+    genes: Dict[str, str] = field(default_factory=dict) # Stores parsed code components
     
     # Evaluation results
     score: Optional[float] = None
@@ -34,6 +37,10 @@ class Node:
     metadata: Dict[str, Any] = field(default_factory=dict) # Edge attributes or extra info
     
     children_ids: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.code and not self.genes:
+            self.genes = parse_solution_genes(self.code)
 
     @property
     def parent_id(self) -> Optional[str]:
@@ -179,3 +186,48 @@ class Journal:
 
     def __len__(self) -> int:
         return len(self.nodes)
+
+
+def parse_solution_genes(code: str) -> Dict[str, str]:
+    """
+    Parses the solution code into 7 distinct gene components based on 
+    # [SECTION: NAME] delimiters.
+    
+    Args:
+        code (str): The full solution.py source code.
+        
+    Returns:
+        Dict[str, str]: A dictionary where keys are section names (DATA, MODEL, etc.)
+                        and values are the corresponding code blocks.
+    """
+    genes = {}
+    
+    # Define the 7 expected sections
+    expected_sections = [
+        "DATA", "MODEL", "LOSS", "OPTIMIZER", 
+        "REGULARIZATION", "INITIALIZATION", "TRAINING_TRICKS",
+        "MAIN_LOOP" # Optional but good to have
+    ]
+    
+    # Regex to find all sections
+    # Matches: # [SECTION: NAME] ... content ... (until next # [SECTION: or End of String)
+    pattern = re.compile(r"^#\s*\[SECTION:\s*(\w+)\]", re.MULTILINE)
+    
+    matches = list(pattern.finditer(code))
+    
+    for i, match in enumerate(matches):
+        section_name = match.group(1)
+        start_idx = match.end()
+        
+        # Determine end index (next match start or end of string)
+        if i + 1 < len(matches):
+            end_idx = matches[i+1].start()
+        else:
+            end_idx = len(code)
+            
+        content = code[start_idx:end_idx].strip()
+        
+        if section_name in expected_sections or True: # Allow capturing all valid sections
+            genes[section_name] = content
+            
+    return genes
