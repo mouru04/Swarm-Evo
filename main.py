@@ -9,6 +9,9 @@ from utils.system_info import get_conda_packages
 from utils.build_workspace import build_workspace
 from utils.logger_system import LoggerSystem, init_logger, logger, log_msg
 from core.agent.agent_pool import AgentPool
+from core.execution.pipeline import Pipeline
+from core.execution.journal import Journal
+from core.execution.iteration_controller import IterationController
 from utils.logger_system import logger as global_logger 
 
 
@@ -111,6 +114,49 @@ async def main_mle_bench_competition() -> None:
     except Exception as e:
         log_msg("ERROR", f"AgentPool 创建失败: {e}")
         return
+
+    try:
+        # 第六阶段：创建IterationController并运行竞赛
+        log_msg("INFO", "\n[6/7] 启动竞赛循环...")
+
+        # 1. 创建 Pipeline
+        pipeline = Pipeline()
+        pipeline.initialize()
+        log_msg("INFO", "✅ Pipeline 初始化完成")
+
+        # 2. 创建 Journal
+        journal = Journal()
+        log_msg("INFO", "✅ Journal 初始化完成")
+
+        # 3. 创建 Controller
+        controller = IterationController(
+            agent_pool=agent_pool,
+            task_pipeline=pipeline,
+            journal=journal,
+            config=config
+        )
+
+        # 4. 运行
+        await controller.run_competition()
+        log_msg("INFO", "✅ 竞赛执行完成")
+
+    except Exception as e:
+        log_msg("ERROR", f"竞赛执行失败: {e}")
+        return
+
+    try:
+        # 第七阶段：展示结果 (占位)
+        log_msg("INFO", "\n[7/7] 结果展示...")
+        # TODO: 从 journal 读取并展示最佳结果
+        best_node = journal.get_best_node()
+        if best_node:
+             log_msg("INFO", f"最佳方案 ID: {best_node.id}, Score: {best_node.score}")
+        else:
+             log_msg("WARNING", "未找到有效方案")
+
+    except Exception as e:
+        log_msg("ERROR", f"结果展示失败: {e}")
+
     
 
 if __name__ == "__main__":

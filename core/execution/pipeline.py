@@ -24,12 +24,12 @@ class Pipeline:
 
     def initialize(self):
         """
-        初始化管道，添加初始的 select 任务。
+        初始化管道，添加初始的 explore 任务。
         """
         with self.lock:
-            log_msg("INFO", f"Initializing pipeline with {self.config.init_task_num} select tasks.")
+            log_msg("INFO", f"Initializing pipeline with {self.config.init_task_num} explore tasks.")
             for _ in range(self.config.init_task_num):
-                self._add_task_internal(self._create_task("select"))
+                self._add_task_internal(self._create_task("explore"))
 
     def _create_task(self, task_type: str, payload: Dict[str, Any] = None) -> Task:
         """
@@ -93,10 +93,10 @@ class Pipeline:
 
     def _generate_new_tasks(self) -> List[Task]:
         """
-        根据 explore_ratio 和 step_task_num 生成任务
+        根据 explore_ratio 和 epoch_task_num 生成任务
         """
         new_tasks = []
-        count = self.config.step_task_num
+        count = self.config.epoch_task_num
         for _ in range(count):
             if random.random() < self.config.explore_ratio:
                 task_type = "explore"

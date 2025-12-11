@@ -63,6 +63,7 @@ class BaseReActAgent:
         self.llm_client = llm_client
         # self.logger = logger # Removed
         self.user_prompt_template = user_prompt_template
+        self.prompt_manager = prompt_manager
         self.accepted_return_types = accepted_return_types
 
         # 工具字典

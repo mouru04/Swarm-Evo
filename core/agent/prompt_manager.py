@@ -49,7 +49,7 @@ class PromptManager:
         self._template_dir = Path(template_dir)
         self._env = Environment(loader=FileSystemLoader(self._template_dir))
 
-    def build_system_prompt(self) -> str:
+    def build_system_prompt(self, context: Optional[PromptContext] = None) -> str:
         """构建 System Prompt。
         
         注意：目前 system_prompt.j2 不接受任何动态变量。

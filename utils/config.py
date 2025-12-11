@@ -78,7 +78,7 @@ class Config:
 
         # 第三阶段：实验配置
         self.random_seed = self._get_required_int_env('RANDOM_SEED')
-        self.max_concurrent_agents = self._get_required_int_env('MAX_CONCURRENT_AGENTS')
+        self.max_concurrent_agents = self._get_optional_int_env('MAX_CONCURRENT_AGENTS', 1)
         self.agent_timeout = self._get_required_int_env('AGENT_TIMEOUT')
         self.agent_num = self._get_required_int_env('AGENT_NUM')
         self.agent_config_dir = self._get_required_env('AGENT_CONFIG_DIR')
@@ -88,7 +88,8 @@ class Config:
         self.mle_bench_server_url = self._get_required_env('MLE_BENCH_SERVER_URL')
         self.mle_bench_workspace_dir = self._get_required_env('MLE_BENCH_WORKSPACE_DIR')
         self.mle_bench_time_limit = self._get_required_int_env('MLE_BENCH_TIME_LIMIT')
-        self.mle_bench_step_limit = self._get_required_int_env('MLE_BENCH_STEP_LIMIT')
+        self.time_limit_seconds = self.mle_bench_time_limit*3600
+        self.mle_bench_epoch_limit = self._get_required_int_env('MLE_BENCH_EPOCH_LIMIT')
         self.mle_bench_private_data_dir = self._get_required_env('MLE_BENCH_PRIVATE_DATA_DIR')
 
         # 第五阶段：Conda环境配置
@@ -97,7 +98,7 @@ class Config:
         # 第六阶段：任务执行配置
         self.init_task_num = self._get_required_int_env('INIT_TASK_NUM')
         self.explore_ratio = self._get_required_float_env('EXPLORE_RATIO')
-        self.step_task_num = self._get_required_int_env('STEP_TASK_NUM')
+        self.epoch_task_num = self._get_required_int_env('EPOCH_TASK_NUM')
 
         self._initialized = True
 
@@ -131,6 +132,26 @@ class Config:
             return int(value_str)
         except ValueError as exc:
             log_msg("ERROR", f"{key}必须为整数，当前值为{value_str}")
+
+    def _get_optional_int_env(self, key: str, default: int) -> int:
+        """
+        读取可选的整数环境变量，如果不存在或为空则返回默认值。
+
+        参数:
+            key: 环境变量名称
+            default: 默认值
+
+        返回:
+            int: 转换后的整数值或默认值
+        """
+        value_str = os.getenv(key)
+        if value_str is None or value_str.strip() == '':
+             return default
+        try:
+            return int(value_str)
+        except ValueError as exc:
+             log_msg("WARNING", f"{key}必须为整数，当前值为{value_str}，使用默认值{default}")
+             return default
 
     def _get_required_float_env(self, key: str) -> float:
         """
