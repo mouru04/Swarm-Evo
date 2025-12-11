@@ -31,7 +31,8 @@ class LoggerSystem:
                 
     def text_log(self, level: str, message: str) -> None:
         """
-        Log a message to the text log file.
+        Log a message to the text log file and print to terminal.
+        If level is ERROR or CRITICAL, raises an Exception.
         
         Args:
             level: Log level/type (e.g., 'INFO', 'WARNING', 'ERROR')
@@ -42,6 +43,13 @@ class LoggerSystem:
         
         with open(self.text_log_path, 'a', encoding='utf-8') as f:
             f.write(log_entry)
+        
+        # Dual print to terminal
+        print(log_entry.strip())
+
+        # Auto-raise on error
+        if level.upper() in ['ERROR', 'CRITICAL']:
+            raise Exception(message)
             
     def json_log(self, data: Dict[str, Any]) -> None:
         """
@@ -52,5 +60,34 @@ class LoggerSystem:
         """
         self.json_data.append(data)
         
+        
         with open(self.json_log_path, 'w', encoding='utf-8') as f:
             json.dump(self.json_data, f, indent=4, ensure_ascii=False)
+
+# Global logger instance
+logger = None
+
+def init_logger(log_dir: str) -> LoggerSystem:
+    global logger
+    logger = LoggerSystem(log_dir)
+    return logger
+
+def log_msg(level: str, message: str) -> None:
+    """Safe logging function that falls back to print/raise if logger is not initialized."""
+    if logger:
+        logger.text_log(level, message)
+    else:
+        # Fallback
+        print(f"[{level}] {message}")
+        if level.upper() in ['ERROR', 'CRITICAL']:
+            raise Exception(message)
+
+def log_json(data: Dict[str, Any]) -> None:
+    """Safe logging function for JSON data."""
+    if logger:
+        logger.json_log(data)
+    else:
+        # Fallback: print json to stdout if logger not ready?
+        # Or just ignore? Printing might clutter.
+        # But for safety, let's print formatted json.
+        print(f"[JSON] {json.dumps(data, indent=2, ensure_ascii=False)}")

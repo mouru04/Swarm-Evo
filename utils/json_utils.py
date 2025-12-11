@@ -2,7 +2,8 @@
 
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+from utils.logger_system import log_msg
 
 def render_history_json(records: List[Dict[str, Any]]) -> str:
     """
@@ -72,4 +73,4 @@ def parse_json_output(text: str) -> Dict[str, Any]:
     try:
         return json.loads(normalized)
     except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse JSON output: {e}\nNormalized text: {normalized}")
+        log_msg("ERROR", f"Failed to parse JSON output: {e}\nNormalized text: {normalized}")

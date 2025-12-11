@@ -7,8 +7,9 @@ from pathlib import Path
 from utils.config import get_config
 from utils.system_info import get_conda_packages
 from utils.build_workspace import build_workspace
-from utils.logger_system import LoggerSystem
+from utils.logger_system import LoggerSystem, init_logger, logger
 from core.agent.agent_pool import AgentPool
+from utils.logger_system import logger as global_logger 
 
 
 async def main_mle_bench_competition() -> None:
@@ -51,39 +52,39 @@ async def main_mle_bench_competition() -> None:
         # 第二阶段：构建并初始化日志系统
         print("\n[2/7] 构建并初始化日志系统...")
         log_dir = os.path.join(config.mle_bench_workspace_dir, "logs")
-        logger = LoggerSystem(log_dir)
-        logger.text_log("INFO", "Logger initialized")
-        print("✅ 日志系统构建成功")
+        init_logger(log_dir)
+        log_msg("INFO", "Logger initialized")
+        log_msg("INFO", "✅ 日志系统构建成功")
     except Exception as e:
         print(f"Logger构建失败: {e}")
         return
 
     try:
         # 第三阶段：验证环境配置
-        logger.text_log("INFO", "\n[3/7] 验证环境配置...")
+        log_msg("INFO", "\n[3/7] 验证环境配置...")
         # config已在开头加载
         is_valid, error_msg = config.validate()
         if not is_valid:
-            logger.text_log("ERROR", f"❌ 配置验证失败: {error_msg}")
-            logger.text_log("WARNING", "提示: 请确保.env文件中配置了必要的API密钥")
+            log_msg("ERROR", f"❌ 配置验证失败: {error_msg}")
+            log_msg("WARNING", "提示: 请确保.env文件中配置了必要的API密钥")
             return
-        logger.text_log("INFO", "✅ 环境配置验证通过")
+        log_msg("INFO", "✅ 环境配置验证通过")
     except Exception as e:
-        logger.text_log("ERROR", f"环境配置失败: {e}")
+        log_msg("ERROR", f"环境配置失败: {e}")
 
     try:
         # 第四阶段：获取系统信息
-        logger.text_log("INFO", "\n[4/7] 获取系统环境信息...")
+        log_msg("INFO", "\n[4/7] 获取系统环境信息...")
 
         conda_packages = get_conda_packages(config.conda_env_name)
-        logger.text_log("INFO", f"✅ Conda环境 '{config.conda_env_name}' 包信息获取成功")
+        log_msg("INFO", f"✅ Conda环境 '{config.conda_env_name}' 包信息获取成功")
     except Exception as e:
-        logger.text_log("ERROR", f"获取系统环境信息失败: {e}")
+        log_msg("ERROR", f"获取系统环境信息失败: {e}")
         return
     
     try:
         # 第五阶段：创建AgentPool
-        logger.text_log("INFO", "\n[5/7] 创建AgentPool...")
+        log_msg("INFO", "\n[5/7] 创建AgentPool...")
         
         # 1. 初始化 LLM 客户端
         llm_client = config.create_llm_client()
@@ -91,7 +92,7 @@ async def main_mle_bench_competition() -> None:
         # 2. 读取 Agent 配置
         agent_config_path = Path("core/config/agent.json")
         if not agent_config_path.exists():
-             raise FileNotFoundError(f"Agent配置文件未找到: {agent_config_path}")
+             log_msg("ERROR", f"Agent配置文件未找到: {agent_config_path}")
         
         with open(agent_config_path, "r", encoding="utf-8") as f:
             agent_config_dict = json.load(f)
@@ -103,13 +104,12 @@ async def main_mle_bench_competition() -> None:
         agent_pool = AgentPool.from_configs(
             agents_num=config.agent_num,
             config=agent_config_dict,
-            llm_client=llm_client,
-            logger=logger
+            llm_client=llm_client
         )
         
-        logger.text_log("INFO", f"✅ AgentPool 创建成功, 已注册 {config.agent_num} 个 Agent")
+        log_msg("INFO", f"✅ AgentPool 创建成功, 已注册 {config.agent_num} 个 Agent")
     except Exception as e:
-        logger.text_log("ERROR", f"AgentPool 创建失败: {e}")
+        log_msg("ERROR", f"AgentPool 创建失败: {e}")
         return
     
 

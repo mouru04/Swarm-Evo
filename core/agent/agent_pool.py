@@ -2,6 +2,7 @@ import json
 from typing import Dict, List, Any, Optional
 
 from core.agent.base_agent import BaseReActAgent
+from utils.logger_system import LoggerSystem, log_msg
 from core.agent.prompt_manager import PromptManager
 from core.agent.safe_tools_toon import SafeListDirectoryTool, SafeReadFileTool, SafeShellTool, SafeWriteFileTool
 
@@ -31,34 +32,34 @@ class AgentPool:
     ✘ 不再负责 orchestration / run_async
     """
 
-    def __init__(self, llm_client=None, logger=None):
+    def __init__(self, llm_client=None):
         self.agents: Dict[str, BaseReActAgent] = {}
         self.llm_client = llm_client
-        self.logger = logger
+        # self.logger = logger # Removed
 
     # -----------------------------------
     # 添加与获取
     # -----------------------------------
     def add(self, agent: BaseReActAgent):
         self.agents[agent.name] = agent
-        if self.logger:
-            self.logger.text_log("INFO", f"Agent '{agent.name}' 注册完成")
+        self.agents[agent.name] = agent
+        log_msg("INFO", f"Agent '{agent.name}' 注册完成")
 
     def get(self, name: str) -> BaseReActAgent:
         if name not in self.agents:
-            raise KeyError(f"Agent '{name}' 不存在于 AgentPool")
+            log_msg("ERROR", f"Agent '{name}' 不存在于 AgentPool")
         return self.agents[name]
 
     # -----------------------------------
     # 从 config 批量构建 Agent
     # -----------------------------------
     @classmethod
-    def from_configs(cls, agents_num: int, config: Dict, llm_client, logger=None):
+    def from_configs(cls, agents_num: int, config: Dict, llm_client):
         """
         用于批量创建 Agent 并注册。
         为 LangGraph 场景提供统一初始化入口。
         """
-        pool = cls(llm_client=llm_client, logger=logger)
+        pool = cls(llm_client=llm_client)
 
         # 加载工具
         tool_list = load_tools(
@@ -74,7 +75,6 @@ class AgentPool:
                 prompt_manager=PromptManager(),
                 max_steps=config.get("max_steps"),
                 llm_client=llm_client,
-                logger=logger,
             )
             pool.add(agent)
 

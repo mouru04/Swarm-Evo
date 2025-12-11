@@ -7,8 +7,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.tools import BaseTool
 from openai import OpenAI
 
-from core.agent.prompt_manager import PromptManager, PromptContext
-from utils.logger_system import LoggerSystem
+from core.agent.prompt_manager import PromptManager # Keep PromptManager as it's used
+from core.agent.prompts import PromptContext # Change source for PromptContext
+from utils.logger_system import LoggerSystem, log_msg, log_json # Add log_msg and log_json
 from utils.json_utils import render_history_json, parse_json_output
 
 
@@ -40,7 +41,7 @@ class BaseReActAgent:
         prompt_manager: PromptManager,
         max_steps: int,
         llm_client: Optional[OpenAI],
-        logger: Optional[LoggerSystem],
+        # logger: Optional[LoggerSystem], # Removed
         user_prompt_template: str = "explore_user_prompt.j2",
         accepted_return_types: List[str] = ["final"] 
     ):
@@ -60,7 +61,7 @@ class BaseReActAgent:
         self.model = model
         self.max_steps = max_steps
         self.llm_client = llm_client
-        self.logger = logger
+        # self.logger = logger # Removed
         self.user_prompt_template = user_prompt_template
         self.accepted_return_types = accepted_return_types
 
@@ -84,7 +85,7 @@ class BaseReActAgent:
         """
         for attempt in range(1, self.MAX_LLM_RETRY + 1):
             try:
-                self.logger.text_log("INFO", f"Agent '{self.name}' 尝试第 {attempt} 次调用 LLM, 使用模型 {self.model}")
+                log_msg("INFO", f"Agent '{self.name}' 尝试第 {attempt} 次调用 LLM, 使用模型 {self.model}")
 
                 # 获取 LLM 响应
                 resp = self.llm_client.chat.completions.create(
@@ -93,8 +94,8 @@ class BaseReActAgent:
                 )
                 choices = getattr(resp, "choices", None)
                 if not choices:
-                    self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
-                    raise ValueError("LLM response missing choices")
+                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
+                    log_msg("ERROR", "LLM response missing choices")
                 
                 raw_text = getattr(choices[0].message, "content", None)
                 if raw_text is None:
@@ -102,11 +103,11 @@ class BaseReActAgent:
                     raw_text = choices[0].message.get("content")
 
                 if raw_text is None:
-                    self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
-                    raise ValueError("LLM response missing content")
+                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
+                    log_msg("ERROR", "LLM response missing content")
                 if not isinstance(raw_text, str):
-                    self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
-                    raise TypeError("LLM response content type error")
+                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
+                    log_msg("ERROR", "LLM response content type error")
 
                 # JSON 解析
                 parsed_json = parse_json_output(raw_text)
@@ -114,7 +115,7 @@ class BaseReActAgent:
                 # 检查 type 字段
                 msg_type = parsed_json.get("type")
                 if not msg_type:
-                    raise ValueError("JSON output missing 'type' field")
+                    log_msg("ERROR", "JSON output missing 'type' field")
 
                 # 1) ReAct Action
                 if msg_type == "action":
@@ -123,7 +124,7 @@ class BaseReActAgent:
                     tool_input = parsed_json.get("input")
                     
                     if not tool_name or tool_input is None:
-                         raise ValueError("ActionStep missing tool or input")
+                         log_msg("ERROR", "ActionStep missing tool or input")
                     
                     return LLMResponse(
                         raw_output=raw_text,
@@ -149,17 +150,17 @@ class BaseReActAgent:
                     )
                 
                 # Unknown type
-                raise ValueError(f"Unknown message type: {msg_type}")
+                log_msg("ERROR", f"Unknown message type: {msg_type}")
 
             except Exception as exc:
                 if attempt < self.MAX_LLM_RETRY:
                     delay = min(self.RETRY_BASE_DELAY * attempt, 10.0)
-                    self.logger.text_log("WARNING", f"Agent '{self.name}' 调用 LLM 失败/解析错误: {exc} | 第 {attempt} 次重试")
+                    log_msg("WARNING", f"Agent '{self.name}' 调用 LLM 失败/解析错误: {exc} | 第 {attempt} 次重试")
                     await asyncio.sleep(delay)
                     continue
                 else:
-                    self.logger.text_log("ERROR", f"Agent '{self.name}' 调用 LLM 失败，重试次数已达上限")
-                    raise RuntimeError(f"LLM consecutive requests failed: {exc}")
+                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，重试次数已达上限")
+                    log_msg("ERROR", f"LLM consecutive requests failed: {exc}")
         
     async def _react_loop(self, instruction_text: str, prompt_context: PromptContext) -> AgentSessionResult:
         
@@ -168,7 +169,7 @@ class BaseReActAgent:
         step: int = 0
 
         while step < self.max_steps:
-            print(f"step: {step}")
+            log_msg("INFO", f"step: {step}")
 
             # 平铺历史（JSON String）
             history = render_history_json(history_records)
@@ -198,10 +199,10 @@ class BaseReActAgent:
             if response.is_final:
                 if response.final_answer is None:
                     # Should not happen logic wise if is_final is set correctly
-                    raise RuntimeError("FinalAnswer missing content")
+                    log_msg("ERROR", "FinalAnswer missing content")
 
                 # Log completion
-                self.logger.json_log({
+                log_json({
                     "step": step,
                     "task": "Task Complete",
                     "final_answer": response.final_answer,
@@ -224,18 +225,18 @@ class BaseReActAgent:
 
                 try:
                     if response.tool_input is None:
-                         raise ValueError("Tool input missing")
+                         log_msg("ERROR", "Tool input missing")
                     
                     # JSON mode: tool_input is already a dict (or primitive), direct pass
                     observation = tool.run(response.tool_input)
 
                 except Exception as e:
                     observation = f"Tool execution failed: {e}"
-                    self.logger.text_log("ERROR", observation)
+                    log_msg("ERROR", observation)
 
             else:
                 observation = f"Unknown tool: {response.action}"
-                self.logger.text_log("ERROR", observation)
+                log_msg("ERROR", observation)
 
             # 工具错误处理
             if isinstance(observation, str) and (
@@ -244,11 +245,11 @@ class BaseReActAgent:
             ):
                 consecutive_tool_errors += 1
                 if consecutive_tool_errors > self.MAX_TOOL_RETRY:
-                    self.logger.text_log("ERROR", "Consecutive tool failures, terminating")
-                    raise RuntimeError(f"Consecutive tool failures, terminating: {observation}")
+                    log_msg("ERROR", "Consecutive tool failures, terminating")
+                    log_msg("ERROR", f"Consecutive tool failures, terminating: {observation}")
                 
                  # Log error
-                self.logger.json_log({
+                log_json({
                     "step": step,
                     "task": response.task,
                     "final_answer": None,
@@ -272,7 +273,7 @@ class BaseReActAgent:
             # 正常观察
             consecutive_tool_errors = 0
 
-            self.logger.json_log({
+            log_json({
                  "step": step,
                  "task": response.task,
                  "final_answer": None,
@@ -292,7 +293,7 @@ class BaseReActAgent:
             step += 1
 
         # 超过最大步数
-        self.logger.text_log("WARNING", "达到最大 ReAct 步数，任务未完成")
+        log_msg("WARNING", "达到最大 ReAct 步数，任务未完成")
         return AgentSessionResult(
             final_answer={"error": "Max steps reached", "success": False},
             history=history_records,

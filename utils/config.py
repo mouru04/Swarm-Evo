@@ -9,8 +9,9 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from openai import OpenAI
+from utils.logger_system import log_msg
 
 
 class Config:
@@ -107,7 +108,7 @@ class Config:
         """
         value = os.getenv(key)
         if value is None or value.strip() == '':
-            raise ValueError(f"{key}为必填配置，请在.env文件中设置")
+            log_msg("ERROR", f"{key}为必填配置，请在.env文件中设置")
         return value
 
     def _get_required_int_env(self, key: str) -> int:
@@ -124,7 +125,7 @@ class Config:
         try:
             return int(value_str)
         except ValueError as exc:
-            raise ValueError(f"{key}必须为整数，当前值为{value_str}") from exc
+            log_msg("ERROR", f"{key}必须为整数，当前值为{value_str}")
 
     def validate(self) -> tuple[bool, str]:
         """

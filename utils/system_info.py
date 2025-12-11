@@ -9,7 +9,9 @@ import os
 import platform
 import subprocess
 from collections import Counter
-from typing import Any, Dict, List, Optional, Tuple
+import shutil
+from typing import Dict, List, Optional, Union
+from utils.logger_system import log_msg
 
 
 def get_cpu_count() -> int:
@@ -21,7 +23,7 @@ def get_cpu_count() -> int:
     """
     count = os.cpu_count()
     if count is None:
-        raise RuntimeError("Failed to get CPU count: os.cpu_count() returned None")
+        log_msg("ERROR", "Failed to get CPU count: os.cpu_count() returned None")
     return count
 
 
@@ -61,7 +63,7 @@ def get_memory_info() -> Dict[str, float]:
         pass
 
     # 如果无法获取内存信息，抛出异常
-    raise RuntimeError("Failed to get memory info: /proc/meminfo parsing failed and psutil not available")
+    log_msg("ERROR", "Failed to get memory info: /proc/meminfo parsing failed and psutil not available")
 
 
 def get_gpu_info() -> Optional[str]:
@@ -84,7 +86,7 @@ def get_gpu_info() -> Optional[str]:
     )
 
     if result.returncode != 0:
-        raise RuntimeError(f"nvidia-smi command failed with return code {result.returncode}: {result.stderr}")
+        log_msg("ERROR", f"nvidia-smi command failed with return code {result.returncode}: {result.stderr}")
 
     if not result.stdout.strip():
         # 如果没有输出，可能表示没有检测到GPU，或者确实没有GPU。
@@ -193,11 +195,11 @@ def get_conda_packages(env_name: Optional[str] = None) -> str:
             )
 
             if result.returncode != 0:
-                raise RuntimeError(f"Failed to execute conda env list command: {result.stderr}")
+                log_msg("ERROR", f"Failed to execute conda env list command: {result.stderr}")
 
             # 验证环境是否存在
             if env_name not in result.stdout:
-                raise ValueError(f"Conda environment '{env_name}' does not exist")
+                log_msg("ERROR", f"Conda environment '{env_name}' does not exist")
 
             # 获取指定环境的包列表
             cmd = ['conda', 'list', '--name', env_name, '--json']
@@ -214,16 +216,16 @@ def get_conda_packages(env_name: Optional[str] = None) -> str:
         )
 
         if result.returncode != 0:
-            raise RuntimeError(f"Failed to execute conda list command: {result.stderr}")
+            log_msg("ERROR", f"Failed to execute conda list command: {result.stderr}")
 
         # 第三阶段：解析JSON输出
         try:
             packages_data: List[Dict[str, Any]] = json.loads(result.stdout)
         except json.JSONDecodeError as e:
-            raise RuntimeError(f"Failed to parse conda list output: {e}")
+            log_msg("ERROR", f"Failed to parse conda list output: {e}")
 
         if not isinstance(packages_data, list):
-            raise RuntimeError("Incorrect data format returned by conda list")
+            log_msg("ERROR", "Incorrect data format returned by conda list")
 
         # 第四阶段：整理Python信息与包列表
         python_info: Optional[Dict[str, Optional[str]]] = None
@@ -311,8 +313,8 @@ def get_conda_packages(env_name: Optional[str] = None) -> str:
         return " ".join(description_parts)
 
     except subprocess.TimeoutExpired:
-        raise RuntimeError("conda list command timed out")
+        log_msg("ERROR", "conda list command timed out")
     except FileNotFoundError:
-        raise RuntimeError("conda command unavailable, please ensure conda is installed and added to PATH")
+        log_msg("ERROR", "conda command unavailable, please ensure conda is installed and added to PATH")
     except Exception as e:
-        raise RuntimeError(f"Unknown error occurred while getting conda package info: {e}")
+        log_msg("ERROR", f"Unknown error occurred while getting conda package info: {e}")

@@ -5,6 +5,7 @@
 
 import shutil
 from pathlib import Path
+from utils.logger_system import log_msg
 from typing import Optional
 from .config import Config
 from .system_info import get_hardware_description
@@ -55,15 +56,13 @@ def build_workspace(
             competition_data_dir = candidate
             break
     if competition_data_dir is None:
-        raise FileNotFoundError(
-            f"无法在以下目录中找到竞赛数据: {[str(path) for path in candidate_data_dirs]}"
-        )
+        log_msg("ERROR", f"无法在以下目录中找到竞赛数据: {[str(path) for path in candidate_data_dirs]}")
 
     # 第三阶段：验证源目录和文件存在性
     competition_path = competition_data_dir
     description_source = competition_path / "description.md"
     if not description_source.exists():
-        raise FileNotFoundError(f"description.md 不存在: {description_source}")
+        log_msg("ERROR", f"description.md 不存在: {description_source}")
 
     # 第四阶段：创建 workspace 目录结构
     workspace_path.mkdir(parents=True, exist_ok=True)
