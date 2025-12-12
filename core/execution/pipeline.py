@@ -123,24 +123,23 @@ class Pipeline:
         with self.lock:
             self.tasks.sort(key=lambda t: t['created_at'])
 
-    def complete_task(self, task_id: str, result_node: Optional[Node] = None, update_data: Optional[Dict[str, Any]] = None):
+    def complete_task(self, task_id: str, result_nodes: List[Node] = None, update_data: Optional[Dict[str, Any]] = None):
         """
         完成一个任务，并根据特定规则添加后续任务。
         
         Args:
             task_id: 任务 ID
-            result_node: 如果是 explore/merge 任务，传入新创建的 Node 对象
+            result_nodes: 如果是 explore/merge 任务，传入新创建的 Node 对象列表
             update_data: 如果是 review 任务，传入更新数据 (score, summary, etc.)
         
         规则:
         - explore -> review (Priority Insert)
-        - select -> merge (Priority Insert) -> Merge 任务创建逻辑在此处或 Controller 触发，但在 V4 规划中建议由 Controller 根据结果触发或此处检测
-          (根据 V3/V4 混合调整，Select 任务通常已经在 Controller 中被处理生成了 Merge 任务。
-           如果 Pipeline 要完全接管，则需要 Select 的结果传递给这里。
-           为了兼容现有 Controller 逻辑，Select -> Merge 已经在 Controller 中手动 add_task 了。
-           这里主要处理 Explore/Merge -> Review 的自动流转。)
+        - select -> merge (Priority Insert) -> Merge 任务创建逻辑在此处或 Controller 触发
         - merge -> review (Priority Insert)
         """
+        if result_nodes is None:
+            result_nodes = []
+
         with self.lock:
             # 查找并更新任务状态
             task = next((t for t in self.tasks if t['id'] == task_id), None)
@@ -152,13 +151,14 @@ class Pipeline:
             # log_msg("INFO", f"Task {task_id} completed.")
 
             # --- Node Logic based on Task Type ---
-            new_node_id = None
+            created_node_ids = []
             
             if task['type'] in ['explore', 'merge']:
-                if result_node:
-                    self.journal.add_node(result_node)
-                    new_node_id = result_node.id
-                    log_msg("INFO", f"Pipeline added Node {new_node_id} for task {task_id}")
+                if result_nodes:
+                    for node in result_nodes:
+                        self.journal.add_node(node)
+                        created_node_ids.append(node.id)
+                        log_msg("INFO", f"Pipeline added Node {node.id} for task {task_id}")
             
             elif task['type'] == 'review':
                 if update_data:
@@ -173,41 +173,42 @@ class Pipeline:
                             log_msg("INFO", f"Pipeline updated Node {target_id} with score {node.score}")
                         else:
                             log_msg("WARNING", f"Review target node {target_id} not found.")
-
+ 
             # --- Follow-up Task Creation ---
             next_task_type = None
-            payload = {"parent_id": task_id}
-
+            
             if task['type'] == 'explore':
                 next_task_type = 'review'
-                # Pass the newly created node ID to the review task
-                if new_node_id:
-                    payload['target_node_id'] = new_node_id
-                    payload['template_name'] = "evaluate_user_prompt.j2" # Explicitly set template if needed
+                if created_node_ids:
+                    # Create a review task for EACH new node
+                    for nid in created_node_ids:
+                        payload = {"parent_id": task_id}
+                        payload['target_node_id'] = nid
+                        payload['template_name'] = "evaluate_user_prompt.j2"
+                        
+                        new_task = self._create_task(next_task_type, payload)
+                        self._prepend_task_internal(new_task)
                 else:
-                    log_msg("WARNING", "Explore task completed without a result_node. Skipping Review.")
+                    log_msg("WARNING", "Explore task completed without any result nodes. Skipping Review.")
                     return
 
             elif task['type'] == 'select':
-                # Select -> Merge creation is handled in Controller in current architecture (V3/V4 mix).
-                # If we moved it here, we would need gene_plan in update_data.
-                # Keeping compatibility with Controller handling Select logic for now.
+                # Select -> Merge logic remains in Controller for now.
                 pass 
 
             elif task['type'] == 'merge':
                 next_task_type = 'review'
-                if new_node_id:
-                    payload['target_node_id'] = new_node_id
-                    payload['template_name'] = "evaluate_user_prompt.j2"
+                if created_node_ids:
+                    for nid in created_node_ids:
+                         payload = {"parent_id": task_id}
+                         payload['target_node_id'] = nid
+                         payload['template_name'] = "evaluate_user_prompt.j2"
+                         
+                         new_task = self._create_task(next_task_type, payload)
+                         self._prepend_task_internal(new_task)
                 else:
-                    log_msg("WARNING", "Merge task completed without a result_node. Skipping Review.")
+                    log_msg("WARNING", "Merge task completed without any result nodes. Skipping Review.")
                     return
-            
-            if next_task_type:
-                new_task = self._create_task(next_task_type, payload)
-                # 使用优先插入，确保后续任务立即被执行
-                self._prepend_task_internal(new_task)
-                # log_msg("INFO", f"Follow-up task {new_task['id']} ({next_task_type}) prepended for execution.")
 
     def store_result(self, task_id: str, data: Any):
         """

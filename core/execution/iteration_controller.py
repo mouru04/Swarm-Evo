@@ -99,7 +99,7 @@ class IterationController:
             result = await agent(agent_input_state)
             
             # 2. 根据任务类型处理结果
-            result_node = None
+            result_nodes = []
             update_data = None
 
             if task_type == 'select':
@@ -146,15 +146,15 @@ class IterationController:
 
             else:
                 # Explore / Merge 任务: 创建新 Node 对象但不直接添加
-                result_node = self._create_node_from_result(result, task)
+                result_nodes = self._create_nodes_from_result(result, task)
                 # self.journal.add_node(result_node) -> 移交给 pipeline
                 
-                log_msg("INFO", f"Agent {agent.name} finished task {task_id}. Generated Node {result_node.id}.")
+                log_msg("INFO", f"Agent {agent.name} finished task {task_id}. Generated {len(result_nodes)} Nodes: {[n.id for n in result_nodes]}")
 
             # 3. 完成任务，并将结果传递给 Pipeline 处理 (Journal 更新, 后续任务触发)
             self.task_pipeline.complete_task(
                 task_id=task_id,
-                result_node=result_node,
+                result_nodes=result_nodes if result_nodes else [], # Pass list of nodes
                 update_data=update_data
             )
             
@@ -253,21 +253,13 @@ class IterationController:
         else:
             return f"Execute task of type {t_type}"
 
-    def _create_node_from_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> Node:
+    def _create_nodes_from_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> List[Node]:
         """
-        Convert agent execution result into a Journal Node.
+        Convert agent execution result into a list of Journal Nodes.
+        Extracts multiple versions of solution.py if available in history.
         """
-        agent_output = result.get('agent_output', {})
-        raw_session = result.get('raw_session') 
-        
-        code_content = ""
-        if isinstance(agent_output, dict):
-            code_content = agent_output.get('code', "")
-            
-        score = None
-        if isinstance(agent_output, dict):
-             score = agent_output.get('score')
-        
+        nodes = []
+        raw_session = result.get('raw_session')
         
         # Parent handling
         parent_ids = []
@@ -278,21 +270,91 @@ class IterationController:
              parent_id = task.get('payload', {}).get('parent_id')
              if parent_id:
                  parent_ids = [parent_id]
-
+        
+        # Extract logs once
         logs = ""
         if raw_session:
             logs = json.dumps([h.get('observation') for h in raw_session.history], ensure_ascii=False)
 
-        return Node(
-            parent_ids=parent_ids,
-            code=code_content,
-            score=score,
-            step=self.current_epoch,
-            action_type=task['type'],
-            logs=logs,
-            metadata={
-                "agent_name": result.get('agent_name'),
-                "task_id": task['id'],
-                "success": result.get('agent_success')
-            }
-        )
+        # Strategy 1: Parse history for write_file to solution.py (Only for Explore tasks)
+        if task['type'] in ['explore', 'merge'] and raw_session:
+            history = raw_session.history
+            seen_content = set()
+            
+            # Iterate through history to find all write_file actions for solution.py
+            for i, step in enumerate(history):
+                action = step.get('action') or step.get('tool')
+                tool_input = step.get('input') or step.get('tool_input', {})
+                
+                if action == 'write_file' and isinstance(tool_input, dict):
+                    path = tool_input.get('path', '')
+                    content = tool_input.get('content', '')
+                    
+                    if path.endswith('solution.py') and content:
+                        if content not in seen_content:
+                            seen_content.add(content)
+                            
+                            # Look ahead for execution logs
+                            execution_log = ""
+                            for j in range(i + 1, len(history)):
+                                next_step = history[j]
+                                next_action = next_step.get('action') or next_step.get('tool')
+                                next_input = next_step.get('input') or next_step.get('tool_input', {})
+                                
+                                # Check for execution commands
+                                if next_action in ['run_python', 'python', 'bash', 'cmd_line', 'execute_script', 'terminal']:
+                                    # Very loose check: if it runs python, assume it runs the solution
+                                    # Or check if 'solution.py' is in the command?
+                                    # For now, take the first execution result as related.
+                                    execution_log = next_step.get('observation', "")
+                                    break
+                                
+                                # Stop if we hit another write to solution.py
+                                if next_action == 'write_file' and isinstance(next_input, dict):
+                                    next_path = next_input.get('path', '')
+                                    if next_path.endswith('solution.py'):
+                                        break
+
+                            # Create a node for this version
+                            node = Node(
+                                parent_ids=parent_ids,
+                                code=content,
+                                score=None, 
+                                step=self.current_epoch,
+                                action_type=task['type'],
+                                logs=execution_log if execution_log else logs, # Prefer specific execution log, fallback to full session
+                                metadata={
+                                    "agent_name": result.get('agent_name'),
+                                    "task_id": task['id'],
+                                    "success": result.get('agent_success'),
+                                    "version": "history_snapshot"
+                                }
+                            )
+                            nodes.append(node)
+                            
+        # Strategy 2: Fallback to final agent output if no nodes found (or for Merge tasks)
+        if not nodes:
+            agent_output = result.get('agent_output', {})
+            code_content = ""
+            if isinstance(agent_output, dict):
+                code_content = agent_output.get('code', "")
+            
+            # If code is present, create a node
+            if code_content:
+                node = Node(
+                    parent_ids=parent_ids,
+                    code=code_content,
+                    score=None if not isinstance(agent_output, dict) else agent_output.get('score'),
+                    step=self.current_epoch,
+                    action_type=task['type'],
+                    logs=logs,
+                    metadata={
+                        "agent_name": result.get('agent_name'),
+                        "task_id": task['id'],
+                        "success": result.get('agent_success'),
+                        "version": "final_output"
+                    }
+                )
+                nodes.append(node)
+                
+        return nodes

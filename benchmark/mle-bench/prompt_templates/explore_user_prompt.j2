@@ -9,7 +9,7 @@
 7. **Step Limit**: You have a maximum of {{ step_limit }} steps.
 8. **Absolute Paths**: You MUST use absolute paths for ALL file paths. This includes:
    - The `input` arguments for tool calls (e.g., `list_directory`, `read_file`).
-   - Any file paths used within your generated `solution.py` code (e.g., `pd.read_csv('/abs/path/...')`).
+   - Any file paths used within your generated `{{ workspace_root }}/solution.py` code (e.g., `pd.read_csv('/abs/path/...')`).
 
 # Validation Strategy (CRITICAL)
 You MUST implement a validation strategy (e.g., train/val split or K-Fold CV) to estimate your performance.
@@ -99,7 +99,7 @@ Use this to understand the starting state.
 
 # Instruction
 Based on the feedback above, please improve or fix the previous solution.
-IMPORTANT: You must save your code to 'solution.py' in the workspace root.
+IMPORTANT: You must save your code to '{{ workspace_root }}/solution.py' in the workspace root.
 {% else %}
 # Instruction
 Please draft an initial solution for the task goal.
