@@ -50,7 +50,7 @@ dcv pull
 
 # 安装agent环境供Agent系统使用
 conda create -n agent python=3.10 -y
-pip install -r benchmark/agent_requirement.txt #linux系统，如果是mac系统需要自己准备requirement.txt文件
+pip install -r requirements_agent.txt #linux系统，如果是mac系统需要自己准备requirement.txt文件
 ```
 
 2. 环境变量配置
@@ -59,4 +59,29 @@ pip install -r benchmark/agent_requirement.txt #linux系统，如果是mac系统
 ```bash
 cp .env.example .env
 ```
+
+3. 配置MLE-bench
+
+配置MLE-bench需要下载一个特殊的库`https://github.com/openai/mle-bench.git`
+
+```bash
+# 下载mle-bench
+cd ..
+git clone https://github.com/openai/mle-bench.git
+cd mle-bench
+
+# 构建基础镜像（如果遇到错误GPT一下，那过错误是要修改一下Dockerfile;基础镜像只需要构建一次）
+docker build --platform=linux/amd64 -t mlebench-env -f environment/Dockerfile .
+
+# 下载mle-bench数据集
+mlebench prepare --lite
+
+# 构建Swarm-Evo镜像 （每一次更新代码都需要重新构建镜像）
+cp -r ../Swarm-Evo ./agents/swarm-evo/
+docker build --no-cache -t swarm-evo ./agents/swarm-evo
+
+# 运行程序
+API_KEY="Your-api-key"  API_BASE="https://open.bigmodel.cn/api/coding/paas/v4"  MODEL_NAME="glm-4.6" python run_agent.py --agent-id swarm-evo --competition-set experiments/splits/low.txt --n-workers 4
+```
+
 

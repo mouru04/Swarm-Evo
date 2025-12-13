@@ -133,7 +133,8 @@ async def main_mle_bench_competition() -> None:
             agent_pool=agent_pool,
             task_pipeline=pipeline,
             journal=journal,
-            config=config
+            config=config,
+            competition_description=description_content
         )
 
         # 4. 运行
