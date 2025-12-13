@@ -46,6 +46,7 @@ conda activate swarm-evo
 pip install -r requirements.txt
 
 ## 拉取数据
+pip install dvc
 dcv pull 
 
 # 安装agent环境供Agent系统使用
@@ -73,7 +74,16 @@ cd mle-bench
 # 构建基础镜像（如果遇到错误GPT一下，那过错误是要修改一下Dockerfile;基础镜像只需要构建一次）
 docker build --platform=linux/amd64 -t mlebench-env -f environment/Dockerfile .
 
+# 从 https://www.kaggle.com/account 下载kaggle.json
+# 将凭证文件放置到指定目录
+mkdir -p ~/.kaggle
+cp /path/to/kaggle.json ~/.kaggle/
+chmod 600 ~/.kaggle/kaggle.json
+
 # 下载mle-bench数据集
+conda create -n mlebench python=3.11
+conda activate mlebench
+pip install -e .
 mlebench prepare --lite
 
 # 构建Swarm-Evo镜像 （每一次更新代码都需要重新构建镜像）
