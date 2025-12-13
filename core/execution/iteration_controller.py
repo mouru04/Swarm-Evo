@@ -16,12 +16,14 @@ class IterationController:
         agent_pool: AgentPool,
         task_pipeline: Pipeline,
         journal: Journal,
-        config: Any
+        config: Any,
+        competition_description: str = ""
     ):
         self.agent_pool = agent_pool
         self.task_pipeline = task_pipeline
         self.journal = journal
         self.config = config
+        self.competition_description = competition_description
 
         self.current_epoch = 0
         self.start_time = time.time()
@@ -238,20 +240,26 @@ class IterationController:
     def _get_task_description(self, task: Dict[str, Any]) -> str:
         """
         Generate a human-readable task description based on task type.
+        Prepends competition description as background context.
         """
         t_type = task['type']
         if t_type == 'select':
-            return "Please select the best solution strategy from the candidates."
+            task_instruction = "Please select the best solution strategy from the candidates."
         elif t_type == 'explore':
-            return "Please explore a new solution based on the plan."
+            task_instruction = "Please explore a new solution based on the plan."
         elif t_type == 'merge':
-            return "Please merge the selected strategies into a new solution."
+            task_instruction = "Please merge the selected strategies into a new solution."
         elif t_type == 'review':
-             return "Please review the solution and provide feedback."
+            task_instruction = "Please review the solution and provide feedback."
         elif t_type == 'debug':
-             return "Please debug the current solution."
+            task_instruction = "Please debug the current solution."
         else:
-            return f"Execute task of type {t_type}"
+            task_instruction = f"Execute task of type {t_type}"
+        
+        # Prepend competition description if available
+        if self.competition_description:
+            return f"# Competition Background\n{self.competition_description}\n\n---\n\n# Your Task\n{task_instruction}"
+        return task_instruction
 
     def _create_nodes_from_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> List[Node]:
         """
