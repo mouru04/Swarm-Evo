@@ -39,36 +39,30 @@ class IterationController:
 
     async def run_epoch(self):
         """
-        Run one epoch:
-        1. Identify available agents.
-        2. Fetch tasks from pipeline.
-        3. Execute tasks concurrently.
-        4. Save results to journal.
-        """
-        tasks_coroutines = []
-        
-        agents = list(self.agent_pool.agents.values())
-        
-        # Concurrency control: Limit the number of active agents
-        max_concurrent = self.config.max_concurrent_agents
-        active_agents = agents[:max_concurrent]
-        
-        log_msg("INFO", f"Epoch {self.current_epoch}: concurrency limit = {max_concurrent}, active agents = {len(active_agents)}")
+        执行一轮（epoch）。
 
-        for agent in active_agents:
+        一轮定义：所有 Agent 各执行一次任务。
+        任务分配：动态分配，执行完一个后再从 Pipeline 获取下一个任务，
+                  可及时响应新插入的任务（如 explore 完成后自动插入的 review）。
+        """
+        agents = list(self.agent_pool.agents.values())
+        log_msg("INFO", f"Epoch {self.current_epoch}: {len(agents)} 个 Agent 轮询执行")
+
+        for agent in agents:
+            # 动态获取任务（可能是刚插入的 review/merge）
             task_item = self.task_pipeline.get_task()
-            if task_item:
-                task_item['agent_name'] = agent.name
-                tasks_coroutines.append(self._run_single_task(agent, task_item))
-            else:
-                pass
-        
-        if tasks_coroutines:
-            log_msg("INFO", f"Epoch {self.current_epoch}: Executing {len(tasks_coroutines)} tasks.")
-            await asyncio.gather(*tasks_coroutines)
-        else:
-            log_msg("INFO", f"Epoch {self.current_epoch}: No tasks to execute.")
-            await asyncio.sleep(1)
+            if not task_item:
+                log_msg("INFO", f"Epoch {self.current_epoch}: Pipeline 无更多任务，跳过 {agent.name}")
+                continue
+
+            task_item['agent_name'] = agent.name
+            log_msg("INFO", f"Epoch {self.current_epoch}: {agent.name} ← {task_item['type']} 任务")
+
+            # 串行执行（避免 workspace 冲突）
+            await self._run_single_task(agent, task_item)
+
+        log_msg("INFO", f"Epoch {self.current_epoch}: 轮询完成")
+
 
     async def _run_single_task(self, agent: BaseReActAgent, task: Dict[str, Any]):
         """
