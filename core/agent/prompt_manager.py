@@ -3,7 +3,9 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, Any
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Template
+
+from utils.logger_system import log_msg
 
 @dataclass
 class PromptContext:
@@ -38,23 +40,91 @@ class PromptContext:
 
 
 class PromptManager:
-    """提示词管理器，负责拼接动态补充信息与模板注入。"""
+    """提示词管理器，负责拼接动态补充信息与模板注入。
+    
+    每个PromptManager实例在初始化时将基础模板加载到内存中，
+    后续只使用内存中的私有模板，支持每个Agent独立进化Prompt。
+    """
 
     def __init__(self, template_dir: str = "benchmark/mle-bench/prompt_templates") -> None:
         """初始化提示词管理器。
+
+        初始化时将所有模板从文件系统加载到内存，后续只使用内存模板。
 
         参数:
             template_dir: 外置模板目录，默认使用 benchmark/mle-bench/prompt_templates。
         """
         self._template_dir = Path(template_dir)
-        self._env = Environment(loader=FileSystemLoader(self._template_dir))
+        self._templates: Dict[str, str] = {}
+        self._load_all_templates()
+
+    def _load_all_templates(self) -> None:
+        """从文件系统加载所有模板到内存。"""
+        for template_file in self._template_dir.glob("*.j2"):
+            with open(template_file, "r", encoding="utf-8") as f:
+                self._templates[template_file.name] = f.read()
+
+    def _get_template(self, name: str) -> Template:
+        """获取模板对象。
+        
+        从内存中的_templates获取模板字符串并创建jinja2.Template对象。
+        如果模板不存在，通过log_msg记录错误并抛出异常。
+
+        参数:
+            name: 模板名称（如 "explore_user_prompt.j2"）
+
+        返回:
+            jinja2.Template对象
+        """
+        if name not in self._templates:
+            log_msg("ERROR", f"模板 '{name}' 不存在于 PromptManager 中")
+        return Template(self._templates[name])
+
+    def set_template(self, name: str, content: str) -> None:
+        """设置实例的模板内容。
+
+        供进化算法调用，将变异后的Prompt内容设置到该实例。
+
+        参数:
+            name: 模板名称（如 "explore_user_prompt.j2"）
+            content: 完整的Jinja2模板字符串
+        """
+        self._templates[name] = content
+
+    def get_template(self, name: str) -> str:
+        """获取实例的模板内容。
+
+        参数:
+            name: 模板名称
+
+        返回:
+            模板字符串
+        """
+        if name not in self._templates:
+            log_msg("ERROR", f"模板 '{name}' 不存在于 PromptManager 中")
+        return self._templates[name]
+
+    def reset_template(self, name: str) -> None:
+        """用基础模板重置私有模板。
+
+        从文件系统重新读取基础模板并覆盖当前的私有模板。
+        这是唯一会重新访问文件系统的操作。
+
+        参数:
+            name: 模板名称
+        """
+        template_path = self._template_dir / name
+        if not template_path.exists():
+            log_msg("ERROR", f"基础模板文件 '{name}' 不存在")
+        with open(template_path, "r", encoding="utf-8") as f:
+            self._templates[name] = f.read()
 
     def build_system_prompt(self, context: Optional[PromptContext] = None) -> str:
         """构建 System Prompt。
         
         注意：目前 system_prompt.j2 不接受任何动态变量。
         """
-        template = self._env.get_template("system_prompt.j2")
+        template = self._get_template("system_prompt.j2")
         return template.render()
 
     def build_user_prompt(self, context: PromptContext, history: str) -> str:
@@ -71,7 +141,7 @@ class PromptManager:
         else:
             template_name = context.template_name
 
-        template = self._env.get_template(template_name)
+        template = self._get_template(template_name)
         
         # 准备环境信息
         elapsed = self._format_duration(context.elapsed_seconds)
