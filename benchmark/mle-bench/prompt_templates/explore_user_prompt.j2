@@ -11,6 +11,10 @@
    - The `input` arguments for tool calls (e.g., `list_directory`, `read_file`).
    - Any file paths used within your generated `{{ workspace_root }}/solution.py` code (e.g., `pd.read_csv('/abs/path/...')`).
 
+# Current Workspace Structure
+The following is the current directory structure of the workspace. Use this to locate data files and understand where to save outputs.
+{{ directory_tree }}
+
 # Validation Strategy (CRITICAL)
 You MUST implement a validation strategy (e.g., train/val split or K-Fold CV) to estimate your performance.
 - You CANNOT rely on the test set for feedback (it is for final submission only).

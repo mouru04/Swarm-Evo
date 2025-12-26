@@ -6,6 +6,7 @@ from typing import Dict, Optional, Any
 from jinja2 import Template
 
 from utils.logger_system import log_msg
+from utils.directory_tree_generator import DirectoryTreeGenerator
 
 @dataclass
 class PromptContext:
@@ -148,6 +149,14 @@ class PromptManager:
         remaining = self._format_duration(context.remaining_seconds)
         total_time = self._format_duration(context.time_limit_seconds)
         
+        # 准备目录树信息
+        try:
+            tree_gen = DirectoryTreeGenerator(context.workspace_root)
+            directory_tree = tree_gen.generate()
+        except Exception as e:
+            # Fallback if generation fails
+            directory_tree = f"Error generating directory tree: {e}"
+
         # 准备历史信息
         history_block = self._build_history_block(history)
 
@@ -165,6 +174,7 @@ class PromptManager:
             total_iterations=context.total_iterations,
             conda_packages=context.conda_packages.strip(),
             history_block=history_block,
+            directory_tree=directory_tree,
 
             # Explore
             parent_code=context.parent_code,
