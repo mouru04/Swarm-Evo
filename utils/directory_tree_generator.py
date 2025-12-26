@@ -135,7 +135,7 @@ class DirectoryTreeGenerator:
         """
         name = path.name
         if is_root:
-            name = f"{path.resolve().name}/"
+            name = f"{path.resolve()}/"
 
         meta_info = ""
         

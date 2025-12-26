@@ -144,6 +144,9 @@ class PromptManager:
 
         template = self._get_template(template_name)
         
+        # Ensure workspace_root is absolute path
+        context.workspace_root = str(Path(context.workspace_root).resolve())
+        
         # 准备环境信息
         elapsed = self._format_duration(context.elapsed_seconds)
         remaining = self._format_duration(context.remaining_seconds)
