@@ -15,6 +15,15 @@
 The tree below shows the content of `{{ workspace_root }}`. Use this to locate data files and understand where to save outputs.
 {{ directory_tree }}
 
+# Important File Previews
+The following are the contents of some key files to help you understand the data format.
+{% for file_path, content in file_previews.items() %}
+## {{ file_path }}
+```
+{{ content }}
+```
+{% endfor %}
+
 # Validation Strategy (CRITICAL)
 You MUST implement a validation strategy (e.g., train/val split or K-Fold CV) to estimate your performance.
 - You CANNOT rely on the test set for feedback (it is for final submission only).

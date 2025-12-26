@@ -12,7 +12,7 @@ class DirectoryTreeGenerator:
     """
 
     def __init__(self, root_path: str, max_depth: int = None, ignore_patterns: list = None, 
-                 collapse_extensions: list = None, collapse_threshold: int = 3):
+                 collapse_extensions: list = None, collapse_threshold: int = 3, preview_files: list = None):
         """
         初始化目录树生成器。
 
@@ -23,6 +23,7 @@ class DirectoryTreeGenerator:
             collapse_extensions (list, optional): 需要检查折叠的文件后缀列表（不带点，例如 ['jpg', 'png']）。
                                                   默认为常见的图像、视频、数据文件格式。
             collapse_threshold (int, optional): 触发折叠的文件数量阈值。默认为 3。
+            preview_files (list, optional): 需要显示预览内容的特定文件名列表。默认为 ['sample_submission.csv', 'train.csv']。
         """
         self.root_path = pathlib.Path(root_path)
         self.max_depth = max_depth
@@ -48,25 +49,55 @@ class DirectoryTreeGenerator:
         self.collapse_extensions = [ext.lower().lstrip('.') for ext in self.collapse_extensions]
         
         self.collapse_threshold = collapse_threshold
+        self.preview_files = preview_files if preview_files is not None else ['sample_submission.csv', 'train.csv']
         
         if not self.root_path.exists():
             raise FileNotFoundError(f"Path not found: {root_path}")
         if not self.root_path.is_dir():
              raise NotADirectoryError(f"Path is not a directory: {root_path}")
 
-    def generate(self) -> str:
+    def generate(self) -> tuple[str, dict]:
         """
-        生成 Markdown 格式的目录树字符串。
+        生成 Markdown 格式的目录树字符串和文件预览字典。
 
         Returns:
-            str: 包含 ASCII 树的 Markdown 代码块。
+            tuple[str, dict]: (包含 ASCII 树的 Markdown 代码块, 文件预览字典 {abs_path: content})
         """
+        self.collected_previews = {}
         root_label = self._format_node_label(self.root_path, is_root=True)
         tree = Tree(root_label)
 
         self._build_tree(self.root_path, tree, current_depth=0)
 
-        return self._render_tree_to_string(tree)
+        return self._render_tree_to_string(tree), self.collected_previews
+
+    def _get_file_preview(self, file_path: pathlib.Path) -> str:
+        """
+        获取文件内容预览。
+        如果是 md 文件读取前 10 行，如果是 csv 文件读取前 5 行。
+        """
+        try:
+            lines_to_read = 5
+            if file_path.suffix.lower() == '.md':
+                lines_to_read = 10
+            
+            preview_lines = []
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for _ in range(lines_to_read):
+                    line = f.readline()
+                    if not line:
+                        break
+                    preview_lines.append(line.rstrip())
+            
+            if not preview_lines:
+                return "(Empty file)"
+                
+            return "\n".join(preview_lines) + "\n..."
+            
+        except UnicodeDecodeError:
+            return "(Preview unavailable: Binary file or encoding error)"
+        except Exception as e:
+            return f"(Preview unavailable: {str(e)})"
 
     def _build_tree(self, current_path: pathlib.Path, tree_node: Tree, current_depth: int):
         """
@@ -128,6 +159,12 @@ class DirectoryTreeGenerator:
             # 否则正常显示
             label = self._format_node_label(f)
             tree_node.add(label)
+            
+            # 检查是否需要预览
+            if f.name in self.preview_files:
+                preview_content = self._get_file_preview(f)
+                # 使用绝对路径作为 Key
+                self.collected_previews[str(f.resolve())] = preview_content
 
     def _format_node_label(self, path: pathlib.Path, is_root: bool = False):
         """

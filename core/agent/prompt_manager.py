@@ -153,9 +153,10 @@ class PromptManager:
         total_time = self._format_duration(context.time_limit_seconds)
         
         # 准备目录树信息
+        file_previews = {}
         try:
             tree_gen = DirectoryTreeGenerator(context.workspace_root)
-            directory_tree = tree_gen.generate()
+            directory_tree, file_previews = tree_gen.generate()
         except Exception as e:
             # Fallback if generation fails
             directory_tree = f"Error generating directory tree: {e}"
@@ -178,6 +179,7 @@ class PromptManager:
             conda_packages=context.conda_packages.strip(),
             history_block=history_block,
             directory_tree=directory_tree,
+            file_previews=file_previews,
 
             # Explore
             parent_code=context.parent_code,
