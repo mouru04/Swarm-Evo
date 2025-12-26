@@ -261,17 +261,9 @@ class SafeWriteFileTool(BaseTool):
             解码后的纯文本。
         """
 
-        if (content.startswith('"') and content.endswith('"')) or (content.startswith("'") and content.endswith("'")):
-            content = content[1:-1]
-
-        content = content.replace("\\\\n", "\\n").replace("\\\\t", "\\t").replace("\\\\r", "\\r")
-
-        try:
-            decoded = codecs.decode(content, "unicode_escape")
-        except Exception:
-            decoded = content.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\n")
-
-        return decoded.replace("\r\n", "\n").replace("\r", "\n")
+        # 直接返回内容，避免对源代码中的转义字符（如 \n）进行过度解码
+        # JSON 解析器已经处理了标准的转义
+        return content
 
     def _run(self, path: str | None = None, content: str | None = None, file_path: str | None = None, text: str | None = None) -> str:
         """
