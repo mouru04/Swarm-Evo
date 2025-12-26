@@ -219,6 +219,8 @@ class BaseReActAgent:
             # ---------------------------
             if response.action in self.tools:
                 tool = self.tools[response.action]
+                print(f"Tool: {tool.name}")
+                print(f"Tool Input: {response.tool_input}")
 
                 try:
                     if response.tool_input is None:
@@ -226,6 +228,7 @@ class BaseReActAgent:
                     
                     # JSON mode: tool_input is already a dict (or primitive), direct pass
                     observation = tool.run(response.tool_input)
+                    print(f"Observation: {observation}")
 
                 except Exception as e:
                     observation = f"Tool execution failed: {e}"

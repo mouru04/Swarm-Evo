@@ -165,6 +165,11 @@ class SafeShellTool(BaseTool):
         "If it fails (exit != 0), full stderr is returned for debugging."
     )
     conda_env_name: str = ""
+    timeout_seconds: int = 600 # Default timeout 10 minutes
+
+    # Timeout constants
+    DEFAULT_SHELL_TIMEOUT: int = 300
+    LONG_RUNNING_TIMEOUT: int = 3600 * 4
 
     def __init__(self, conda_env_name: Optional[str] = None, **kwargs: object) -> None:
         """
@@ -178,6 +183,20 @@ class SafeShellTool(BaseTool):
         """
 
         super().__init__(conda_env_name=conda_env_name or "", **kwargs)
+    
+    def _inject_force_flags(self, command: str) -> str:
+        """
+        Inject force flags for common interactive commands to prevent hanging.
+        Currently supports: unzip
+        """
+        # Simple heurstic for unzip
+        if "unzip" in command:
+            # Check if -o (overwrite) or -n (never overwrite) is present
+            if "-o" not in command and "-n" not in command:
+                # Inject -o and -q (quiet) right after unzip
+                # This is a basic replacement, might need regex for more complex cases
+                command = command.replace("unzip", "unzip -o -q")
+        return command
 
     def _run(self, command: str) -> str:
         """
@@ -197,6 +216,12 @@ class SafeShellTool(BaseTool):
         resolved_conda = conda_exe if conda_exe else "conda"
         if shutil.which(resolved_conda) is None:
             return _wrap_error("ShellExecutionError", f"未找到可用的 conda 可执行文件：{resolved_conda}")
+        
+        # Inject force flags
+        command = self._inject_force_flags(command)
+
+        # Determine timeout
+        timeout = self.LONG_RUNNING_TIMEOUT if "python" in command else self.DEFAULT_SHELL_TIMEOUT
 
         activation_chain = (
             f'eval "$({resolved_conda} shell.bash hook)" '
@@ -205,14 +230,28 @@ class SafeShellTool(BaseTool):
         )
 
         try:
+            # Set stdin to DEVNULL to fail fast on interactive prompts
             proc = subprocess.Popen(
                 ["/bin/bash", "-lc", activation_chain],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
                 text=True,
             )
-            stdout, stderr = proc.communicate()
-            exit_code = proc.returncode
+            
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+                exit_code = proc.returncode
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                return _wrap_error(
+                    "ShellTimeoutError", 
+                    f"Command timed out after {timeout} seconds",
+                    stdout_preview=stdout[:MAX_STDOUT_CHARS] if stdout else "",
+                    stderr=stderr[:MAX_STDERR_CHARS] if stderr else ""
+                )
+
         except Exception as exc:
             return _wrap_error("ShellExecutionError", str(exc))
 
@@ -233,11 +272,18 @@ class SafeShellTool(BaseTool):
 
         full_stderr = stderr if stderr else ""
         stdout_preview = stdout[:MAX_STDOUT_CHARS] if stdout else ""
+        
+        # Hint for interactive issues
+        extra_info = {}
+        if "EOF" in full_stderr or exit_code != 0:
+             extra_info["hint"] = "Hint: 此时 stdin 为关闭状态。如果遇到 EOF 错误，说明该命令正尝试交互式读取输入。请使用非交互式参数（如 -y, -o, --yes 等）。"
+
         return _wrap_error(
             "ShellCommandError",
             f"Command exited with {exit_code}",
             stderr=full_stderr,
             stdout_preview=stdout_preview,
+            **extra_info
         )
 
 
