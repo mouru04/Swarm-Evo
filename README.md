@@ -87,7 +87,7 @@ pip install -e .
 mlebench prepare --lite
 
 # 构建Swarm-Evo镜像 （每一次更新代码都需要重新构建镜像）
-cp -r ../Swarm-Evo ./agents/swarm-evo/
+rsync -av --progress --exclude='workspace' --exclude='workspace/.dvc' ../Swarm-Evo/ ./agents/swarm-evo/
 docker build --no-cache -t swarm-evo ./agents/swarm-evo
 
 # 运行程序
