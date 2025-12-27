@@ -7,6 +7,7 @@ from jinja2 import Template
 
 from utils.logger_system import log_msg
 from utils.directory_tree_generator import DirectoryTreeGenerator
+from utils.system_info import get_hardware_description
 
 @dataclass
 class PromptContext:
@@ -151,12 +152,16 @@ class PromptManager:
         elapsed = self._format_duration(context.elapsed_seconds)
         remaining = self._format_duration(context.remaining_seconds)
         total_time = self._format_duration(context.time_limit_seconds)
+        # 获取动态硬件信息
+        device_info = get_hardware_description()
+        log_msg("INFO", f"Device info: {device_info}")
         
         # 准备目录树信息
         file_previews = {}
         try:
-            tree_gen = DirectoryTreeGenerator(context.workspace_root)
+            tree_gen = DirectoryTreeGenerator(context.workspace_root, ignore_patterns=['.git', '__pycache__',"agent"])
             directory_tree, file_previews = tree_gen.generate()
+            # log_msg("INFO", f"Directory tree generated: {directory_tree}")
         except Exception as e:
             # Fallback if generation fails
             directory_tree = f"Error generating directory tree: {e}"
@@ -177,6 +182,7 @@ class PromptManager:
             iteration=context.iteration,
             total_iterations=context.total_iterations,
             conda_packages=context.conda_packages.strip(),
+            device_info=device_info,
             history_block=history_block,
             directory_tree=directory_tree,
             file_previews=file_previews,

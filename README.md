@@ -71,6 +71,16 @@ cd ..
 git clone https://github.com/openai/mle-bench.git
 cd mle-bench
 
+# 修改`environment/config/container_configs/default.json`文件，用以下内容替代
+{
+    "gpus": 1,
+    "mem_limit": null,
+    "shm_size": "4G",
+    "nano_cpus": 4e9,
+    "runtime": "runc"
+}
+
+
 # 构建基础镜像（如果遇到错误GPT一下，那过错误是要修改一下Dockerfile;基础镜像只需要构建一次）
 docker build --platform=linux/amd64 -t mlebench-env -f environment/Dockerfile .
 
@@ -91,7 +101,9 @@ rsync -av --progress --exclude='workspace' --exclude='workspace/.dvc' ../Swarm-E
 docker build --no-cache -t swarm-evo ./agents/swarm-evo
 
 # 运行程序
-API_KEY="Your-api-key"  API_BASE="https://open.bigmodel.cn/api/coding/paas/v4"  MODEL_NAME="glm-4.6" python run_agent.py --agent-id swarm-evo --competition-set experiments/splits/low.txt --n-workers 4
+API_KEY="your api key"  API_BASE="https://open.bigmodel.cn/api/coding/paas/v4"  MODEL_NAME="glm-4.6" python run_agent.py --agent-id swarm-evo --competition-set experiments/splits/low.txt --n-workers 4
 ```
+
+注意如果是运行`main.py`，需要把`.env`文件中的`MLE_BENCH_WORKSPACE_DIR`设置为`./workspace`目录,如果是运行mle-bench需要把`.env`文件中的`MLE_BENCH_WORKSPACE_DIR`设置为`../`目录
 
 

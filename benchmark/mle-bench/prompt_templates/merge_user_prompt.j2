@@ -15,6 +15,14 @@
 The following is the current directory structure of the workspace. Use this to locate data files and understand where to save outputs.
 {{ directory_tree }}
 
+# Execution Environment
+- **Time**: {{ elapsed }} elapsed, {{ remaining }} remaining (Total: {{ total_time }}).
+- **Iteration**: {{ iteration }} / {{ total_iterations }}
+- **System Resource**: 
+{{ device_info }}
+- **Conda Packages**:
+{{ conda_packages }}
+
 # Important File Previews
 The following are the contents of some key files to help you understand the data format.
 {% for file_path, content in file_previews.items() %}
@@ -44,6 +52,9 @@ function: Read file content (auto-truncates large files). Returns FileReadResult
 3) write_file
 input: path, content
 function: Write text content to a file (overwrites existing file and auto-creates parent directories). Returns WriteFileResult(...) on success.
+WARNING: The preview in the result is TRUNCATED for display only. A truncated preview does NOT mean the file was incompletely written. After a successful write, you MUST immediately execute the file.
+WARNING: Read and write operations, including executing the unzip command, are strictly prohibited in read-only directories.
+
 
 4) terminal
 input: command

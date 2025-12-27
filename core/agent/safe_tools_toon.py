@@ -354,11 +354,27 @@ class SafeWriteFileTool(BaseTool):
         except Exception as exc:
             return _wrap_error("WriteFileError", str(exc), path=resolved_path)
 
-        preview = decoded[:2000]
+        bytes_written = len(decoded.encode("utf-8"))
+        preview_truncated = len(decoded) > 2000
+        raw_preview = decoded[:2000]
+        
+        # 在 preview 头部添加成功消息，打破 Agent 的自我怀疑循环
+        if preview_truncated:
+            preview = (
+                f"[SUCCESS] File written completely ({bytes_written} bytes). "
+                f"Preview is TRUNCATED for display only.\n"
+                f"--- Preview Start ---\n{raw_preview}"
+            )
+        else:
+            preview = (
+                f"[SUCCESS] File written completely ({bytes_written} bytes). "
+                f"--- Preview Start ---\n{raw_preview}"
+            )
+        
         data = {
             "type": "WriteFileResult",
             "path": resolved_path,
-            "bytes_written": len(decoded.encode("utf-8")),
+            "bytes_written": bytes_written,
             "preview": preview,
         }
         return tool_observation(ok=True, data=data)

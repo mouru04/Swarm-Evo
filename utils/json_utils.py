@@ -39,15 +39,34 @@ def normalize_json_output(text: str) -> str:
         
     cleaned = text.strip()
     
-    # 1. Remove markdown code blocks
-    if "```" in cleaned:
-        # Patter to match ```json (content) ``` or just ``` (content) ```
-        pattern = re.compile(r"```(?:\w+)?\s*(?P<content>.*?)\s*```", re.DOTALL)
-        match = pattern.search(cleaned)
-        if match:
-            cleaned = match.group("content").strip()
+    # 1. Try to find code blocks
+    # Pattern to match ```(optional lang) content ```
+    # We use findall to get ALL blocks, not just the first one
+    code_block_pattern = re.compile(r"```(?P<lang>\w+)?\s*(?P<content>.*?)\s*```", re.DOTALL)
+    matches = code_block_pattern.findall(cleaned)
+    
+    candidate_content = None
+
+    # Strategy A: Explicit "json" tag
+    for lang, content in matches:
+        if lang and lang.lower() == "json":
+            candidate_content = content
+            break
+            
+    # Strategy B: If no explicit json tag, look for a block that looks like a JSON object
+    if not candidate_content and matches:
+        for _, content in matches:
+            stripped = content.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                candidate_content = content
+                break
+                
+    # If we found a block, use it. Otherwise continue with original text (cleaned)
+    if candidate_content:
+        cleaned = candidate_content
             
     # 2. Extract strictly from first '{' to last '}'
+    # This handles surrounding whitespace or text even within the block
     start_idx = cleaned.find("{")
     end_idx = cleaned.rfind("}")
     
@@ -73,4 +92,6 @@ def parse_json_output(text: str) -> Dict[str, Any]:
     try:
         return json.loads(normalized)
     except json.JSONDecodeError as e:
+        with open("error.txt", "w") as f:
+            f.write(text)
         log_msg("ERROR", f"Failed to parse JSON output: {e}\nNormalized text: {normalized}")

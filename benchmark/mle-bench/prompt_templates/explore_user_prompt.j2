@@ -44,6 +44,8 @@ function: Read file content (auto-truncates large files). Returns FileReadResult
 3) write_file
 input: path, content
 function: Write text content to a file (overwrites existing file and auto-creates parent directories). Returns WriteFileResult(...) on success.
+WARNING: The preview in the result is TRUNCATED for display only. A truncated preview does NOT mean the file was incompletely written. After a successful write, you MUST immediately execute the file.
+WARNING: Read and write operations, including executing the unzip command, are strictly prohibited in read-only directories.
 
 4) terminal
 input: command
@@ -84,6 +86,8 @@ Only output this when `submission.csv` exists and you are done.
 # Execution Environment
 - **Time**: {{ elapsed }} elapsed, {{ remaining }} remaining (Total: {{ total_time }}).
 - **Iteration**: {{ iteration }} / {{ total_iterations }}
+- **System Resource**: 
+{{ device_info }}
 - **Conda Packages**:
 {{ conda_packages }}
 
@@ -118,27 +122,20 @@ IMPORTANT: You must save your code to '{{ workspace_root }}/solution.py' in the 
 Please draft an initial solution for the task goal.
 
 **CRITICAL: Strict Structure Requirement**
-You MUST structure your `solution.py` exactly as follows. You MUST use the provided comment tags (e.g. `# [SECTION: DATA]`) and class/function signatures. The system RELIES on these tags to parse and improve your code.
+You MUST implement the code following the EXACT structure below. 
+The system uses the `[SECTION: ...]` tags to parse your code, so DO NOT modify the tags or function signatures.
+If device has GPU, you MUST use it.
 
+<required_structure_reference>
 ```python
-import pandas as pd
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
 # ... other imports
 
 # [SECTION: DATA]
 class DataManager:
-    def __init__(self, data_path, batch_size=32):
-        pass
-        
-    def get_dataloaders(self):
-        pass
 
 # [SECTION: MODEL]
-def create_model(input_shape, num_classes):
+def create_model():
     pass
 
 # [SECTION: LOSS]
@@ -146,32 +143,28 @@ def get_loss_function():
     pass
 
 # [SECTION: OPTIMIZER]
-def get_optimizer(model, learning_rate=1e-3):
+def get_optimizer():
     pass
 
 # [SECTION: REGULARIZATION]
-def apply_regularization(model):
+def apply_regularization():
     pass
 
 # [SECTION: INITIALIZATION]
-def init_weights(model):
+def init_weights():
     pass
 
 # [SECTION: TRAINING_TRICKS]
 class TrainerConfig:
-    def __init__(self):
-        pass
-        
-    def train_one_epoch(self, model, train_loader, optimizer, criterion):
-        pass
-        
-    def validate(self, model, val_loader, criterion):
-        pass
+    pass
 
 # [SECTION: MAIN_LOOP]
 if __name__ == "__main__":
     pass
 ```
+</required_structure_reference>
 
-IMPORTANT: You must save your code to 'solution.py' in the workspace root.
+**NEXT STEP:**
+Now that you have reviewed the structure above, generate a JSON `ActionStep` to write this code to `{{ workspace_root }}/solution.py`.
+**DO NOT output the raw code directly.** You MUST wrap it inside the JSON object.
 {% endif %}

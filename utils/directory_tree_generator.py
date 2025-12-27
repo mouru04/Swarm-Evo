@@ -1,5 +1,6 @@
 import pathlib
 import io
+import os
 import humanize
 from rich.tree import Tree
 from rich.text import Text
@@ -185,6 +186,10 @@ class DirectoryTreeGenerator:
                 meta_info = f" ({count} items)"
             except PermissionError:
                 meta_info = " (Access Denied)"
+                
+            # Check for read-only status
+            if not os.access(path, os.W_OK):
+                meta_info += " (Read-only, modification forbidden)"
         else:
             # 文件显示大小
             try:
