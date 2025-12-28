@@ -75,12 +75,13 @@ def normalize_json_output(text: str) -> str:
         
     return cleaned
 
-def parse_json_output(text: str) -> Dict[str, Any]:
+def parse_json_output(text: str, suppress_error_log: bool = False) -> Dict[str, Any]:
     """
     Robustly parse JSON output from LLM.
     
     Args:
         text: Raw output from LLM.
+        suppress_error_log: If True, do not log ERROR on failure.
         
     Returns:
         Parsed dictionary.
@@ -92,6 +93,8 @@ def parse_json_output(text: str) -> Dict[str, Any]:
     try:
         return json.loads(normalized)
     except json.JSONDecodeError as e:
-        with open("error.txt", "w") as f:
-            f.write(text)
-        log_msg("ERROR", f"Failed to parse JSON output: {e}\nNormalized text: {normalized}")
+        if not suppress_error_log:
+            with open("error.txt", "w") as f:
+                f.write(text)
+            log_msg("ERROR", f"Failed to parse JSON output: {e}\nNormalized text: {normalized}")
+        raise e

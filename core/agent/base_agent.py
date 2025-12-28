@@ -380,7 +380,8 @@ class BaseReActAgent:
                     content = msg.content
                     # 尝试解析 JSON (兼容 Select/Review 等需要结构化输出的任务)
                     try:
-                        parsed = parse_json_output(content)
+                        # 对于非 JSON 任务 (Merge/Explore)，解析失败是正常的，因此抑制错误日志
+                        parsed = parse_json_output(content, suppress_error_log=True)
                         if parsed and isinstance(parsed, dict):
                             final_answer = parsed
                         else:
