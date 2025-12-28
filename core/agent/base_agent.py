@@ -25,7 +25,7 @@ from langgraph.prebuilt import ToolNode
 
 from core.agent.prompt_manager import PromptManager, PromptContext
 from core.agent.tools import get_tools
-from utils.logger_system import log_msg
+from utils.logger_system import log_msg, log_json
 from utils.json_utils import parse_json_output
 
 
@@ -149,19 +149,29 @@ class AgentGraphBuilder:
         step_count = state["step_count"]
         agent_name = state["agent_name"]
 
-        log_msg("INFO", f"Agent '{agent_name}' Step {step_count}: 调用 LLM")
-
         try:
             response = self.llm_with_tools.invoke(messages)
             
             # 记录响应信息
             if isinstance(response, AIMessage):
+                # 准备 JSON 日志数据
+                json_data = {
+                    "agent_name": agent_name,
+                    "step_count": step_count,
+                    "response": {
+                        "content": response.content,
+                        "tool_calls": response.tool_calls,
+                        "response_metadata": response.response_metadata
+                    }
+                }
+                log_json(json_data)
+
                 if response.tool_calls:
                     # 获取工具名称和参数用于日志
-                    tool_calls_info = [f"{tc['name']}({tc['args']})" for tc in response.tool_calls]
-                    log_msg("INFO", f"Agent '{agent_name}' LLM 请求工具: {tool_calls_info}")
+                    tool_calls_info = [f"{tc['name']}" for tc in response.tool_calls]
+                    log_msg("INFO", f"Agent '{agent_name}' Step {step_count}: 调用 LLM，请求工具 {tool_calls_info} 成功")
                 else:
-                    log_msg("INFO", f"Agent '{agent_name}' LLM 返回最终回复")
+                    log_msg("INFO", f"Agent '{agent_name}' Step {step_count}: 调用 LLM，返回最终回复 成功")
             
             return {
                 "messages": [response],
@@ -169,7 +179,13 @@ class AgentGraphBuilder:
             }
 
         except Exception as e:
-            log_msg("ERROR", f"Agent '{agent_name}' LLM 调用失败: {e}")
+            msg = f"Agent '{agent_name}' Step {step_count}: 调用 LLM 失败: {e}"
+            log_msg("ERROR", msg)
+            log_json({
+                "agent_name": agent_name,
+                "step_count": step_count,
+                "error": str(e)
+            })
             # 返回错误消息
             error_msg = AIMessage(content=f"LLM 调用失败: {e}")
             return {
@@ -202,7 +218,7 @@ class AgentGraphBuilder:
             tool_args = tool_call["args"]
             tool_call_id = tool_call["id"]
             
-            log_msg("INFO", f"Agent '{agent_name}' 执行工具: {tool_name}")
+            # log_msg("INFO", f"Agent '{agent_name}' 执行工具: {tool_name}")
             
             if tool_name not in tool_map:
                 error_content = f"未知工具: {tool_name}"
@@ -217,7 +233,7 @@ class AgentGraphBuilder:
                 tool = tool_map[tool_name]
                 # 直接调用工具
                 result = tool.invoke(tool_args)
-                log_msg("INFO", f"Agent '{agent_name}' 工具 {tool_name} 执行成功")
+                # log_msg("INFO", f"Agent '{agent_name}' 工具 {tool_name} 执行成功")
                 tool_messages.append(ToolMessage(
                     content=str(result),
                     tool_call_id=tool_call_id

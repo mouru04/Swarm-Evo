@@ -47,6 +47,7 @@ class PromptContext:
     parent_code: Optional[str] = None
     parent_feedback: Optional[str] = None
     parent_history: Optional[str] = None
+    parent_score: Optional[float] = None
 
     # ========== Merge/Select 任务字段 ==========
     candidates: Optional[Dict[str, str]] = None
@@ -255,6 +256,7 @@ class PromptManager:
             "parent_code": context.parent_code,
             "parent_feedback": context.parent_feedback,
             "parent_history": context.parent_history,
+            "parent_score": context.parent_score,
 
             # Merge / Select 字段
             "candidates": context.candidates,

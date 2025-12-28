@@ -177,6 +177,19 @@ class IterationController:
                 payload['template_name']  = "merge_user_prompt.j2"
             else:
                 payload['template_name'] = "explore_user_prompt.j2"
+                
+                # [NEW Logic] Explore 任务继承处理
+                # 如果 payload 中携带 parent_id，则加载该节点作为上下文
+                parent_id = payload.get('parent_id')
+                if parent_id:
+                    parent_node = self.journal.get_node(parent_id)
+                    if parent_node:
+                        # 填充继承数据
+                        payload['parent_code'] = parent_node.code
+                        payload['parent_feedback'] = parent_node.summary
+                        # logs 对应模板中的 parent_history
+                        execution_logs = parent_node.logs
+                        payload['parent_score'] = parent_node.score
         
         # 动态填充数据
         candidates_data = {}
@@ -223,10 +236,14 @@ class IterationController:
             
             parent_code=payload.get('parent_code'),
             parent_feedback=payload.get('parent_feedback'),
+            parent_score=payload.get('parent_score'),
             candidates=candidates_data if candidates_data else payload.get('candidates'),
             gene_plan=gene_plan_data if gene_plan_data else payload.get('gene_plan'),
             solution_code=solution_code if solution_code else payload.get('solution_code'),
             execution_logs=execution_logs if execution_logs else payload.get('execution_logs'),
+            
+            # 显式传递 parent_history (对应 logs)
+            parent_history=execution_logs if task['type'] == 'explore' and execution_logs else None,
             
             template_name=payload.get('template_name') 
         )

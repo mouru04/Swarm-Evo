@@ -108,12 +108,20 @@ class Pipeline:
         """
         new_tasks = []
         count = self.config.epoch_task_num
+        
+        # [Strategy] 获取当前全局最优节点作为 Parent
+        best_node = self.journal.get_best_node()
+        parent_id = best_node.id if best_node else None
+        
         for _ in range(count):
             if random.random() < self.config.explore_ratio:
                 task_type = "explore"
+                # 如果存在最优节点，则注入 parent_id，启用继承模式
+                payload = {"parent_id": parent_id} if parent_id else {}
+                new_tasks.append(self._create_task(task_type, payload))
             else:
                 task_type = "select"
-            new_tasks.append(self._create_task(task_type))
+                new_tasks.append(self._create_task(task_type))
         return new_tasks
 
     def reorder_tasks(self):
