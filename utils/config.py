@@ -199,6 +199,27 @@ class Config:
             base_url=self.api_base
         )
 
+    def create_langchain_llm(self):
+        """
+        创建 LangChain 兼容的 Chat Model。
+
+        用于新的 LangGraph Agent 架构。
+
+        参数:
+            无
+
+        返回:
+            BaseChatModel: LangChain Chat Model 实例
+        """
+        from langchain_openai import ChatOpenAI
+        
+        return ChatOpenAI(
+            model=self.model_name,
+            api_key=self.api_key,
+            base_url=self.api_base,
+            temperature=0.2,
+        )
+
 
 # 全局单例访问函数
 _config_instance: Optional[Config] = None

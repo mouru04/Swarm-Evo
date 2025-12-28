@@ -89,8 +89,8 @@ async def main_mle_bench_competition() -> None:
         # 第五阶段：创建AgentPool
         log_msg("INFO", "\n[5/7] 创建AgentPool...")
         
-        # 1. 初始化 LLM 客户端
-        llm_client = config.create_llm_client()
+        # 1. 初始化 LLM 客户端 (使用 LangChain 适配器)
+        llm = config.create_langchain_llm()
 
         # 2. 读取 Agent 配置
         agent_config_path = Path("core/config/agent.json")
@@ -107,7 +107,7 @@ async def main_mle_bench_competition() -> None:
         agent_pool = AgentPool.from_configs(
             agents_num=config.agent_num,
             config=agent_config_dict,
-            llm_client=llm_client
+            llm=llm
         )
         
         log_msg("INFO", f"✅ AgentPool 创建成功, 已注册 {config.agent_num} 个 Agent")

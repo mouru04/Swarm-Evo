@@ -3,6 +3,9 @@ python-dotenv
 langchain
 langchain-core
 langchain-community
+langchain-openai
+langgraph
+pydantic
 pandas
 flask
 scikit-learn

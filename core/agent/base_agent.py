@@ -1,312 +1,450 @@
-import re
-import json
-import asyncio
-from typing import List, Dict, Any, Optional
+"""
+基于 LangGraph 的 Agent 模块。
 
-from langchain_core.prompts import ChatPromptTemplate
+本模块使用 LangGraph 的 StateGraph 构建 Agent，取代原有的 while 循环实现。
+核心优势：
+- 使用 LLM 的 Native Tool Calling，消除 JSON 解析错误
+- 图结构清晰可视化，易于调试和扩展
+- 状态可持久化，支持中断和恢复
+"""
+
+from typing import Dict, List, Any, Optional, Annotated, Sequence, TypedDict, Literal, Union
+import operator
+
+from langchain_core.messages import (
+    BaseMessage, 
+    SystemMessage, 
+    HumanMessage, 
+    AIMessage,
+    ToolMessage,
+)
+from langchain_core.language_models import BaseChatModel
 from langchain.tools import BaseTool
-from openai import OpenAI
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
 
-from core.agent.prompt_manager import PromptManager #
-from core.agent.prompt_manager import PromptContext
-from utils.logger_system import LoggerSystem, log_msg, log_json 
-from utils.json_utils import render_history_json, parse_json_output
+from core.agent.prompt_manager import PromptManager, PromptContext
+from core.agent.tools import get_tools
+from utils.logger_system import log_msg
+from utils.json_utils import parse_json_output
 
 
+# ============================================================================
+# 状态定义
+# ============================================================================
+class AgentState(TypedDict):
+    """
+    Agent 状态定义。
+    
+    使用 TypedDict 定义强类型状态，LangGraph 会自动处理状态更新。
+    """
+    # 消息历史列表，使用 add operator 实现追加
+    messages: Annotated[Sequence[BaseMessage], operator.add]
+    # 当前步数
+    step_count: int
+    # 最大步数限制
+    max_steps: int
+    # Agent 名称
+    agent_name: str
+    # 任务是否成功完成
+    success: bool
+    # 最终答案 (如果有)
+    final_answer: Optional[Dict[str, Any]]
 
 
-class LLMResponse:
-    def __init__(self, raw_output, normalized_output, is_final, final_answer, task, action, tool_input):
-        self.raw_output = raw_output
-        self.normalized_output = normalized_output
-        self.is_final = is_final
-        self.final_answer = final_answer
-        self.task = task
-        self.action = action
-        self.tool_input = tool_input
-
+# ============================================================================
+# 结果类定义 (兼容性)
+# ============================================================================
 class AgentSessionResult:
-    def __init__(self, final_answer, history, success):
+    """Agent 执行结果，保持与旧代码兼容。"""
+    
+    def __init__(
+        self, 
+        final_answer: Optional[Dict[str, Any]], 
+        history: List[Dict[str, Any]], 
+        success: bool
+    ):
         self.final_answer = final_answer
         self.history = history
         self.success = success
 
-class BaseReActAgent:
+
+# ============================================================================
+# Agent 图构建器
+# ============================================================================
+class AgentGraphBuilder:
+    """
+    Agent 图构建器。
+    
+    负责创建和编译 LangGraph StateGraph。
+    """
 
     def __init__(
         self,
         name: str,
-        model: str,
+        llm: BaseChatModel,
         tools: List[BaseTool],
-        prompt_manager: PromptManager,
-        max_steps: int,
-        llm_client: Optional[OpenAI],
-        # logger: Optional[LoggerSystem], # Removed
-        user_prompt_template: str = "explore_user_prompt.j2",
-        accepted_return_types: List[str] = ["final", "selection", "review","evaluation"] 
+        max_steps: int = 16,
     ):
         """
-        Args:
-            accepted_return_types: List of "type" field values that are considered valid final outputs.
-                                   Default is ["final"]. 
-                                   For Select, pass ["selection"]. 
-                                   For Evaluate, pass ["evaluation"].
-                                   "action" is always handled internally as a tool step.
+        初始化 Agent 图构建器。
+
+        参数:
+            name: Agent 名称。
+            llm: LangChain Chat Model (已绑定工具)。
+            tools: 工具列表。
+            max_steps: 最大执行步数。
         """
-        self.MAX_LLM_RETRY = 12
-        self.RETRY_BASE_DELAY = 2.0
-        self.MAX_TOOL_RETRY = 5
-        
         self.name = name
-        self.model = model
+        self.tools = tools
         self.max_steps = max_steps
-        self.llm_client = llm_client
-        # self.logger = logger # Removed
-        self.user_prompt_template = user_prompt_template
-        self.prompt_manager = prompt_manager
-        self.accepted_return_types = accepted_return_types
-
-        # 工具字典
-        self.tools: Dict[str, BaseTool] = {tool.name: tool for tool in tools}
-
-        # 系统 + 用户提示词模板
-        # Note: prompt_manager will handle the actual content, but we define the strict structure here
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", "{system_instruction}"),
-            ("user", "{user_instruction}")
-        ])
-    
-    async def llm(self, messages: List[Dict[str, str]]) -> LLMResponse:
-        """
-        调用 LLM 并解析 JSON 输出：
-        - { "type": "action", ... }
-        - { "type": "final", ... }
-        - { "type": "selection", ... }
-        - { "type": "evaluation", ... }
-        """
-        for attempt in range(1, self.MAX_LLM_RETRY + 1):
-            try:
-                log_msg("INFO", f"Agent '{self.name}' 尝试第 {attempt} 次调用 LLM, 使用模型 {self.model}")
-
-                # 获取 LLM 响应
-                resp = self.llm_client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                )
-                choices = getattr(resp, "choices", None)
-                if not choices:
-                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
-                    log_msg("ERROR", "LLM response missing choices")
-                
-                raw_text = getattr(choices[0].message, "content", None)
-                if raw_text is None:
-                     # Fallback for some clients returning dict
-                    raw_text = choices[0].message.get("content")
-
-                if raw_text is None:
-                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
-                    log_msg("ERROR", "LLM response missing content")
-                if not isinstance(raw_text, str):
-                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，LLM 响应格式错误")
-                    log_msg("ERROR", "LLM response content type error")
-
-                # JSON 解析
-                parsed_json = parse_json_output(raw_text)
-                
-                # 检查 type 字段
-                msg_type = parsed_json.get("type")
-                if not msg_type:
-                    log_msg("ERROR", "JSON output missing 'type' field")
-
-                # 1) ReAct Action
-                if msg_type == "action":
-                    task = parsed_json.get("task")
-                    tool_name = parsed_json.get("tool")
-                    tool_input = parsed_json.get("input")
-                    
-                    if not tool_name or tool_input is None:
-                         log_msg("ERROR", "ActionStep missing tool or input")
-                    
-                    return LLMResponse(
-                        raw_output=raw_text,
-                        normalized_output=json.dumps(parsed_json),
-                        is_final=False,
-                        final_answer=None,
-                        task=task,
-                        action=tool_name,
-                        tool_input=tool_input
-                    )
-                
-                # 2) Final Result (Standard 'final' or custom types like 'selection', 'evaluation')
-                # If the type is known to be a "Return Action", treat it as final answer
-                if msg_type == "final" or msg_type in self.accepted_return_types:
-                    return LLMResponse(
-                        raw_output=raw_text,
-                        normalized_output=json.dumps(parsed_json),
-                        is_final=True,
-                        final_answer=parsed_json, # For JSON mode, final_answer IS the dict object
-                        task=None,
-                        action=None,
-                        tool_input=None
-                    )
-                
-                # Unknown type
-                log_msg("ERROR", f"Unknown message type: {msg_type}")
-
-            except Exception as exc:
-                if attempt < self.MAX_LLM_RETRY:
-                    delay = min(self.RETRY_BASE_DELAY * attempt, 10.0)
-                    log_msg("WARNING", f"Agent '{self.name}' 调用 LLM 失败/解析错误: {exc} | 第 {attempt} 次重试")
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    log_msg("ERROR", f"Agent '{self.name}' 调用 LLM 失败，重试次数已达上限")
-                    log_msg("ERROR", f"LLM consecutive requests failed: {exc}")
         
-    async def _react_loop(self, instruction_text: str, prompt_context: PromptContext) -> AgentSessionResult:
+        # 绑定工具到 LLM
+        self.llm_with_tools = llm.bind_tools(tools)
         
-        history_records: List[Dict[str, Any]] = []
-        consecutive_tool_errors: int = 0
-        step: int = 0
+        # 工具节点
+        self.tool_node = ToolNode(tools)
 
-        while step < self.max_steps:
-            log_msg("INFO", f"step: {step}")
+    def _should_continue(self, state: AgentState) -> Literal["tools", "end"]:
+        """
+        决定是否继续执行。
 
-            # 平铺历史（JSON String）
-            history = render_history_json(history_records)
+        逻辑:
+        1. 如果达到最大步数，结束
+        2. 如果 LLM 返回了 tool_calls，继续执行工具
+        3. 否则，结束
+        """
+        messages = state["messages"]
+        step_count = state["step_count"]
+        max_steps = state["max_steps"]
+
+        # 检查步数限制
+        if step_count >= max_steps:
+            log_msg("WARNING", f"Agent '{state['agent_name']}' 达到最大步数 {max_steps}")
+            return "end"
+
+        # 获取最后一条消息
+        last_message = messages[-1] if messages else None
+        
+        if last_message is None:
+            return "end"
+
+        # 检查是否有 tool_calls
+        if isinstance(last_message, AIMessage) and last_message.tool_calls:
+            return "tools"
+
+        return "end"
+
+    def _call_model(self, state: AgentState) -> Dict[str, Any]:
+        """
+        调用 LLM 节点。
+
+        参数:
+            state: 当前状态。
+
+        返回:
+            状态更新字典。
+        """
+        messages = state["messages"]
+        step_count = state["step_count"]
+        agent_name = state["agent_name"]
+
+        log_msg("INFO", f"Agent '{agent_name}' Step {step_count}: 调用 LLM")
+
+        try:
+            response = self.llm_with_tools.invoke(messages)
             
-            user_prompt = self.prompt_manager.build_user_prompt(prompt_context, history)
-            system_instruction = self.prompt_manager.build_system_prompt(prompt_context)
+            # 记录响应信息
+            if isinstance(response, AIMessage):
+                if response.tool_calls:
+                    # 获取工具名称和参数用于日志
+                    tool_calls_info = [f"{tc['name']}({tc['args']})" for tc in response.tool_calls]
+                    log_msg("INFO", f"Agent '{agent_name}' LLM 请求工具: {tool_calls_info}")
+                else:
+                    log_msg("INFO", f"Agent '{agent_name}' LLM 返回最终回复")
+            
+            return {
+                "messages": [response],
+                "step_count": step_count + 1,
+            }
 
-            # 创建 OpenAI 兼容消息
-            formatted_messages = self.prompt.format_messages(
-                system_instruction=system_instruction,
-                user_instruction=user_prompt,
-            )
-            role_map = {"human": "user", "ai": "assistant", "system": "system"}
-            chat_messages = [
-                {"role": role_map.get(message.type, message.type), "content": message.content}
-                for message in formatted_messages
-            ]
+        except Exception as e:
+            log_msg("ERROR", f"Agent '{agent_name}' LLM 调用失败: {e}")
+            # 返回错误消息
+            error_msg = AIMessage(content=f"LLM 调用失败: {e}")
+            return {
+                "messages": [error_msg],
+                "step_count": step_count + 1,
+            }
 
-            # 第二阶段：调用 LLM
-            response = await self.llm(chat_messages)
+    def _call_tools(self, state: AgentState) -> Dict[str, Any]:
+        """
+        调用工具节点。
 
-            # 第三阶段：Final Answer / Custom Return
-            if response.is_final:
-                if response.final_answer is None:
-                    # Should not happen logic wise if is_final is set correctly
-                    log_msg("ERROR", "FinalAnswer missing content")
-
-                # Log completion
-                log_json({
-                    "step": step,
-                    "task": "Task Complete",
-                    "final_answer": response.final_answer,
-                    "action": None,
-                    "tool_input": None,
-                    "observation": None,
-                })
-
-                return AgentSessionResult(
-                    final_answer=response.final_answer,
-                    history=history_records,
-                    success=True
-                )
-
-            # ---------------------------
-            # ActionStep 的工具执行
-            # ---------------------------
-            if response.action in self.tools:
-                tool = self.tools[response.action]
-
-                try:
-                    if response.tool_input is None:
-                         log_msg("ERROR", "Tool input missing")
-                    
-                    # JSON mode: tool_input is already a dict (or primitive), direct pass
-                    observation = tool.run(response.tool_input)
-
-                except Exception as e:
-                    observation = f"Tool execution failed: {e}"
-                    log_msg("ERROR", observation)
-
-            else:
-                observation = f"Unknown tool: {response.action}"
-                log_msg("ERROR", observation)
-
-            # 工具错误处理
-            if isinstance(observation, str) and (
-                observation.startswith("Unknown tool") or
-                observation.startswith("Tool execution failed")
-            ):
-                consecutive_tool_errors += 1
-                if consecutive_tool_errors > self.MAX_TOOL_RETRY:
-                    log_msg("ERROR", "Consecutive tool failures, terminating")
-                    log_msg("ERROR", f"Consecutive tool failures, terminating: {observation}")
-                
-                 # Log error
-                log_json({
-                    "step": step,
-                    "task": response.task,
-                    "final_answer": None,
-                    "action": response.action,
-                    "tool_input": response.tool_input,
-                    "observation": f"Error: {observation}",
-                })
-                
-                # Append to history
-                history_records.append({
-                    "step": step,
-                    "task": response.task,
-                    "tool": response.action, # Standardize naming in history
-                    "input": response.tool_input,
-                    "observation": f"Error: {observation}",
-                    "type": "action"
-                })
-                step += 1
+        直接从 AIMessage.tool_calls 中提取工具调用并执行。
+        """
+        agent_name = state["agent_name"]
+        messages = state["messages"]
+        
+        # 获取最后一条消息（应该是 AIMessage with tool_calls）
+        last_message = messages[-1] if messages else None
+        
+        if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+            log_msg("WARNING", f"Agent '{agent_name}' 无工具调用")
+            return {"messages": []}
+        
+        # 构建工具字典
+        tool_map = {tool.name: tool for tool in self.tools}
+        
+        tool_messages = []
+        for tool_call in last_message.tool_calls:
+            tool_name = tool_call["name"]
+            tool_args = tool_call["args"]
+            tool_call_id = tool_call["id"]
+            
+            log_msg("INFO", f"Agent '{agent_name}' 执行工具: {tool_name}")
+            
+            if tool_name not in tool_map:
+                error_content = f"未知工具: {tool_name}"
+                log_msg("ERROR", error_content)
+                tool_messages.append(ToolMessage(
+                    content=error_content,
+                    tool_call_id=tool_call_id
+                ))
                 continue
+            
+            try:
+                tool = tool_map[tool_name]
+                # 直接调用工具
+                result = tool.invoke(tool_args)
+                log_msg("INFO", f"Agent '{agent_name}' 工具 {tool_name} 执行成功")
+                tool_messages.append(ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_call_id
+                ))
+            except Exception as e:
+                error_content = f"工具执行失败: {e}"
+                log_msg("ERROR", f"Agent '{agent_name}' {error_content}")
+                tool_messages.append(ToolMessage(
+                    content=error_content,
+                    tool_call_id=tool_call_id
+                ))
+        
+        return {"messages": tool_messages}
 
-            # 正常观察
-            consecutive_tool_errors = 0
+    def build(self) -> StateGraph:
+        """
+        构建并返回编译后的图。
 
-            log_json({
-                 "step": step,
-                 "task": response.task,
-                 "final_answer": None,
-                 "action": response.action,
-                 "tool_input": response.tool_input,
-                 "observation": str(observation),
-            })
+        返回:
+            编译后的 StateGraph。
+        """
+        # 创建图
+        graph = StateGraph(AgentState)
 
-            history_records.append({
-                "step": step,
-                "task": response.task,
-                "tool": response.action,
-                "input": response.tool_input,
-                "observation": str(observation), # Observation might be object or string
-                "type": "action"
-            })
-            step += 1
+        # 添加节点
+        graph.add_node("agent", self._call_model)
+        graph.add_node("tools", self._call_tools)
 
-        # 超过最大步数
-        log_msg("WARNING", "达到最大 ReAct 步数，任务未完成")
-        return AgentSessionResult(
-            final_answer={"error": "Max steps reached", "success": False},
-            history=history_records,
-            success=False
+        # 设置入口点
+        graph.set_entry_point("agent")
+
+        # 添加条件边
+        graph.add_conditional_edges(
+            "agent",
+            self._should_continue,
+            {
+                "tools": "tools",
+                "end": END,
+            }
         )
-    
+
+        # 工具执行后返回 agent
+        graph.add_edge("tools", "agent")
+
+        # 编译
+        return graph.compile()
+
+
+# ============================================================================
+# Agent 包装器 (兼容旧接口)
+# ============================================================================
+class BaseReActAgent:
+    """
+    基于 LangGraph 的 ReAct Agent。
+
+    保持与旧代码兼容的接口，同时使用新的图执行引擎。
+    """
+
+    def __init__(
+        self,
+        name: str,
+        llm: BaseChatModel,
+        tools: List[BaseTool],
+        prompt_manager: PromptManager,
+        max_steps: int = 16,
+        accepted_return_types: Optional[List[str]] = None,
+    ):
+        """
+        初始化 Agent。
+
+        参数:
+            name: Agent 名称。
+            llm: LangChain Chat Model。
+            tools: 工具列表。
+            prompt_manager: 提示词管理器。
+            max_steps: 最大执行步数。
+            accepted_return_types: 接受的返回类型 (兼容性参数，新架构中不再需要)。
+        """
+        self.name = name
+        self.llm = llm
+        self.tools = tools
+        self.prompt_manager = prompt_manager
+        self.max_steps = max_steps
+        self.accepted_return_types = accepted_return_types or ["final"]
+
+        # 构建图
+        builder = AgentGraphBuilder(
+            name=name,
+            llm=llm,
+            tools=tools,
+            max_steps=max_steps,
+        )
+        self.graph = builder.build()
+
+    async def run(
+        self, 
+        task_instruction: str, 
+        prompt_context: PromptContext
+    ) -> AgentSessionResult:
+        """
+        执行 Agent 任务。
+
+        参数:
+            task_instruction: 任务指令。
+            prompt_context: 提示词上下文。
+
+        返回:
+            AgentSessionResult 执行结果。
+        """
+        log_msg("INFO", f"Agent '{self.name}' 开始执行任务")
+
+        # 构建初始消息
+        initial_messages = self.prompt_manager.build_initial_messages(
+            context=prompt_context,
+            task_instruction=task_instruction
+        )
+
+        # 初始状态
+        initial_state: AgentState = {
+            "messages": initial_messages,
+            "step_count": 0,
+            "max_steps": self.max_steps,
+            "agent_name": self.name,
+            "success": False,
+            "final_answer": None,
+        }
+
+        try:
+            # 执行图
+            # 设置 recursion_limit 为 max_steps * 3，确保能覆盖 Agent->Tools->Agent 循环
+            final_state = await self.graph.ainvoke(
+                initial_state, 
+                config={"recursion_limit": self.max_steps * 3 + 2}
+            )
+
+            # 提取结果
+            messages = final_state.get("messages", [])
+            step_count = final_state.get("step_count", 0)
+
+            # 从最后一条 AI 消息中提取答案
+            final_answer = None
+            for msg in reversed(messages):
+                if isinstance(msg, AIMessage) and not msg.tool_calls:
+                    content = msg.content
+                    # 尝试解析 JSON (兼容 Select/Review 等需要结构化输出的任务)
+                    try:
+                        parsed = parse_json_output(content)
+                        if parsed and isinstance(parsed, dict):
+                            final_answer = parsed
+                        else:
+                            final_answer = {"content": content}
+                    except Exception:
+                        final_answer = {"content": content}
+                    break
+
+            # 构建历史记录 (兼容旧格式)
+            history = self._extract_history(messages)
+
+            success = final_answer is not None and step_count < self.max_steps
+
+            log_msg("INFO", f"Agent '{self.name}' 任务完成, 步数: {step_count}, 成功: {success}")
+
+            return AgentSessionResult(
+                final_answer=final_answer,
+                history=history,
+                success=success
+            )
+
+        except Exception as e:
+            log_msg("ERROR", f"Agent '{self.name}' 执行失败: {e}")
+            return AgentSessionResult(
+                final_answer={"error": str(e)},
+                history=[],
+                success=False
+            )
+
+    def _extract_history(self, messages: Sequence[BaseMessage]) -> List[Dict[str, Any]]:
+        """
+        从消息列表中提取历史记录。
+
+        转换为旧格式以保持兼容性。
+        """
+        history = []
+        step = 0
+
+        for i, msg in enumerate(messages):
+            if isinstance(msg, AIMessage):
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        history.append({
+                            "step": step,
+                            "type": "action",
+                            "tool": tc["name"],
+                            "input": tc["args"],
+                            "task": "Tool Call",
+                        })
+                        step += 1
+            elif isinstance(msg, ToolMessage):
+                # 找到对应的历史记录并添加 observation
+                if history and history[-1].get("type") == "action":
+                    history[-1]["observation"] = msg.content
+
+        return history
+
     async def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        LangGraph 节点入口
+        LangGraph 节点入口 (兼容旧接口)。
+
+        参数:
+            state: 输入状态字典。
+
+        返回:
+            输出状态字典。
         """
+        task_instruction = state.get("task_description", "")
+        prompt_context = state.get("prompt_context")
 
-        instruction_text = state["task_description"]
-        prompt_context = state["prompt_context"]
+        if prompt_context is None:
+            log_msg("ERROR", "prompt_context not provided in state")
+            return {
+                "agent_output": {"error": "prompt_context not provided"},
+                "agent_history": [],
+                "agent_success": False,
+                "agent_name": self.name,
+            }
 
-        # 调用内部 ReAct 推理循环
-        session = await self._react_loop(instruction_text, prompt_context)
+        session = await self.run(task_instruction, prompt_context)
 
         return {
             "agent_output": session.final_answer,
@@ -317,5 +455,36 @@ class BaseReActAgent:
         }
 
 
+# ============================================================================
+# 工厂函数
+# ============================================================================
+def create_agent(
+    name: str,
+    llm: BaseChatModel,
+    conda_env_name: str,
+    prompt_manager: Optional[PromptManager] = None,
+    max_steps: int = 16,
+) -> BaseReActAgent:
+    """
+    创建 Agent 实例。
 
+    参数:
+        name: Agent 名称。
+        llm: LangChain Chat Model。
+        conda_env_name: Conda 环境名称。
+        prompt_manager: 提示词管理器 (可选)。
+        max_steps: 最大执行步数。
 
+    返回:
+        BaseReActAgent 实例。
+    """
+    tools = get_tools(conda_env_name)
+    pm = prompt_manager or PromptManager()
+
+    return BaseReActAgent(
+        name=name,
+        llm=llm,
+        tools=tools,
+        prompt_manager=pm,
+        max_steps=max_steps,
+    )
