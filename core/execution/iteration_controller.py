@@ -1,3 +1,6 @@
+import os
+import shutil
+import zipfile
 import asyncio
 import time
 import json
@@ -145,6 +148,11 @@ class IterationController:
                 result_nodes = self._create_nodes_from_result(result, task)
                 # self.journal.add_node(result_node) -> 移交给 pipeline
                 
+                # [NEW Logic] Archive solution.py and submission.csv
+                archive_path = self._archive_solution_files(task_id, self.config.mle_bench_workspace_dir)
+                for node in result_nodes:
+                    node.archive_path = archive_path
+
                 log_msg("INFO", f"Agent {agent.name} finished task {task_id}. Generated {len(result_nodes)} Nodes: {[n.id for n in result_nodes]}")
 
             # 3. 完成任务，并将结果传递给 Pipeline 处理 (Journal 更新, 后续任务触发)
@@ -377,3 +385,38 @@ class IterationController:
                 nodes.append(node)
                 
         return nodes
+    
+    def _archive_solution_files(self, task_id: str, workspace_dir: str) -> Optional[str]:
+        """
+        Compress solution.py and submission.csv into a zip file in a hidden directory.
+        Returns the absolute path to the archive if successful, else None.
+        """
+        archive_dir = os.path.join(workspace_dir, ".archives")
+        os.makedirs(archive_dir, exist_ok=True)
+        
+        files_to_archive = ["solution.py", "submission.csv"]
+        found_files = []
+        
+        # Check existence
+        for filename in files_to_archive:
+            file_path = os.path.join(workspace_dir, filename)
+            if os.path.exists(file_path):
+                found_files.append(filename)
+        
+        if not found_files:
+            return None
+            
+        archive_name = f"{task_id}.zip"
+        archive_path = os.path.join(archive_dir, archive_name)
+        
+        try:
+            with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for filename in found_files:
+                    file_path = os.path.join(workspace_dir, filename)
+                    zipf.write(file_path, arcname=filename)
+            
+            # log_msg("INFO", f"Archived {found_files} to {archive_path}")
+            return archive_path
+        except Exception as e:
+            log_msg("ERROR", f"Failed to archive files for task {task_id}: {e}")
+            return None

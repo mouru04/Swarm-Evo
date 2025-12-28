@@ -26,6 +26,7 @@ class Node:
     score: Optional[float] = None
     is_buggy: bool = False
     submission_created: bool = False
+    archive_path: Optional[str] = None # Path to the zipped solution/submission archive
     
     # Execution context
     logs: str = ""
