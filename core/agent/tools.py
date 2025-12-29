@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import time
 from typing import Optional, Type
@@ -285,12 +286,46 @@ class TerminalTool(BaseTool):
         """
         super().__init__(conda_env_name=conda_env_name, **kwargs)
 
-    def _inject_force_flags(self, command: str) -> str:
-        """为常见交互命令注入强制标志。"""
-        if "unzip" in command:
-            if "-o" not in command and "-n" not in command:
-                command = command.replace("unzip", "unzip -o -q")
-        return command
+    def _create_safe_bin(self) -> str:
+        """
+        创建包含非交互式 wrapper 脚本的安全 bin 目录。
+        返回该目录的绝对路径。
+        """
+        safe_bin_dir = os.path.expanduser("~/.agent_safe_bin")
+        os.makedirs(safe_bin_dir, exist_ok=True)
+
+        # 定义 wrapper 脚本内容
+        # 核心思想：强制添加 -o -f -y 等非交互参数
+        wrappers = {
+            "unzip": '#!/bin/bash\n/usr/bin/unzip -o -q "$@"',
+            "cp": '#!/bin/bash\n/bin/cp -f "$@"',
+            "mv": '#!/bin/bash\n/bin/mv -f "$@"',
+            "rm": '#!/bin/bash\n/bin/rm -f "$@"',
+        }
+
+        for cmd, script_content in wrappers.items():
+            wrapper_path = os.path.join(safe_bin_dir, cmd)
+            # 仅在文件内容不同或不存在时写入，减少 IO
+            write_needed = True
+            if os.path.exists(wrapper_path):
+                try:
+                    with open(wrapper_path, "r") as f:
+                        if f.read().strip() == script_content.strip():
+                            write_needed = False
+                except Exception:
+                    pass
+            
+            if write_needed:
+                try:
+                    with open(wrapper_path, "w") as f:
+                        f.write(script_content)
+                    # chmod +x
+                    st = os.stat(wrapper_path)
+                    os.chmod(wrapper_path, st.st_mode | 0o111)
+                except Exception:
+                    pass  # 如果写入失败，尽力而为
+
+        return safe_bin_dir
 
     def _run(self, command: str) -> str:
         """执行 Shell 命令。"""
@@ -303,36 +338,53 @@ class TerminalTool(BaseTool):
         if shutil.which(conda_exe) is None:
             return f"[ERROR] Conda executable not found: {conda_exe}"
 
-        # 注入强制标志
-        command = self._inject_force_flags(command)
+        # 准备 safe bin
+        safe_bin_dir = self._create_safe_bin()
 
         # 决定超时时间
-        timeout = self.long_running_timeout if "python" in command else self.default_timeout
+        # 仅对 solution.py 或 train.py 使用长超时
+        is_long_running = "solution.py" in command or "train.py" in command
+        timeout = self.long_running_timeout if is_long_running else self.default_timeout
 
         # 构建激活链
+        # 注意：我们将 safe_bin_dir 添加到 PATH 的最前面，优先级最高
         activation_chain = (
-            f'eval "$({conda_exe} shell.bash hook)" '
+            f'export PATH="{safe_bin_dir}:$PATH" '
+            f'&& eval "$({conda_exe} shell.bash hook)" '
             f"&& conda activate {env_name} "
             f"&& {command}"
         )
 
         try:
+            # start_new_session=True 用于创建新的进程组
+            # 这允许我们在超时时杀死整个进程组，防止僵尸管道
             proc = subprocess.Popen(
                 ["/bin/bash", "-lc", activation_chain],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
                 text=True,
+                start_new_session=True,
             )
 
             try:
                 stdout, stderr = proc.communicate(timeout=timeout)
                 exit_code = proc.returncode
             except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout, stderr = proc.communicate()
+                # 使用 os.killpg 杀死整个进程组
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass  # 进程可能已经结束
+
+                try:
+                    stdout, stderr = proc.communicate(timeout=0.1)
+                except Exception:
+                    stdout, stderr = "", ""
+
                 return (
                     f"[ERROR] Command timed out after {timeout} seconds.\n"
+                    f"Command: {command}\n"
                     f"Partial stdout:\n{self._truncate(stdout, MAX_STDOUT_CHARS) if stdout else '(none)'}\n"
                     f"Partial stderr:\n{self._truncate(stderr, MAX_STDERR_CHARS) if stderr else '(none)'}"
                 )

@@ -393,6 +393,14 @@ class BaseReActAgent:
             # 构建历史记录 (兼容旧格式)
             history = self._extract_history(messages)
 
+            # 如果没有找到 final_answer (例如达到最大步数)，构造默认错误返回
+            if final_answer is None:
+                final_answer = {
+                    "content": "Error: Agent failed to produce a final answer (likely max steps reached).",
+                    "error": "no_final_answer",
+                    "step_count": step_count
+                }
+
             success = final_answer is not None and step_count < self.max_steps
 
             log_msg("INFO", f"Agent '{self.name}' 任务完成, 步数: {step_count}, 成功: {success}")

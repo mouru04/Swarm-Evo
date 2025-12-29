@@ -110,7 +110,7 @@ Please draft an initial solution for the task goal.
 **CRITICAL: Strict Structure Requirement**
 You MUST implement the code following the EXACT structure below. 
 The system uses the `[SECTION: ...]` tags to parse your code, so DO NOT modify the tags or function signatures.
-If device has GPU, you MUST use it.
+If device has GPU, you MUST use it. You MUST explicitly check for CUDA availability.
 
 <required_structure_reference>
 ```python
@@ -146,6 +146,7 @@ class TrainerConfig:
 
 # [SECTION: MAIN_LOOP]
 if __name__ == "__main__":
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     pass
 ```
 </required_structure_reference>

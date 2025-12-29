@@ -107,7 +107,7 @@ Your generated code MUST maintain the same 7-component structure as the parent s
 
 1. **Extract**: Copy the relevant code blocks (genes) from the specified Parent Solutions.
 2. **Merge**: Assemble them into a single, cohesive script using the structure template below.
-3. **Resolve Conflicts**: Fix any variable naming clashes, import errors, or compatibility issues between the different genes.
+3. **Resolve Conflicts**: Fix any variable naming clashes, import errors, or compatibility issues. CRITICAL: unexpected CPU usage is FORBIDDEN. You MUST check `device` definition and ensure it uses `cuda` if available.
 4. **Save**: You MUST save the final code to `solution.py`.
 
 **Required Structure Template:**
