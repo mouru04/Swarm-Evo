@@ -69,6 +69,8 @@ class Journal:
     def __init__(self):
         self.nodes: Dict[str, Node] = {}
         self.root_id: Optional[str] = None
+        self.score_min: Optional[float] = None
+        self.score_max: Optional[float] = None
 
     def add_node(self, node: Node) -> None:
         """Adds a new node to the journal and updates graph connections."""
@@ -167,7 +169,9 @@ class Journal:
         """Saves the entire journal to a JSON file."""
         data = {
             "root_id": self.root_id,
-            "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()}
+            "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()},
+            "score_min": self.score_min,
+            "score_max": self.score_max,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -180,6 +184,8 @@ class Journal:
         
         journal = cls()
         journal.root_id = data.get("root_id")
+        journal.score_min = data.get("score_min")
+        journal.score_max = data.get("score_max")
         for nid, node_data in data.get("nodes", {}).items():
             journal.nodes[nid] = Node.from_dict(node_data)
         return journal
