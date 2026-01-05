@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import select
 import signal
 import subprocess
 import time
@@ -352,9 +353,13 @@ class TerminalTool(BaseTool):
             f'export PATH="{safe_bin_dir}:$PATH" '
             f'&& eval "$({conda_exe} shell.bash hook)" '
             f"&& conda activate {env_name} "
-            f"&& {command}"
+            f"&& exec {command}"
         )
 
+        stdout_chunks = []
+        stderr_chunks = []
+        start_time = time.time()
+        
         try:
             # start_new_session=True 用于创建新的进程组
             # 这允许我们在超时时杀死整个进程组，防止僵尸管道
@@ -366,29 +371,106 @@ class TerminalTool(BaseTool):
                 text=True,
                 start_new_session=True,
             )
+            # 缓存 PGID，因为如果进程先退出被 poll() 回收，os.getpgid(proc.pid) 会失效
+            pgid = proc.pid
 
+            # 使用 select 进行非阻塞读取和活性检测
+            # 定义宽限期：主进程退出后，最多再读 1 秒
+            grace_period = 1.0
+            exit_time = None
+            
+            while True:
+                # 1. 检查超时
+                if time.time() - start_time > timeout:
+                    raise subprocess.TimeoutExpired(proc.args, timeout)
+                
+                # 2. 检查主进程状态
+                return_code = proc.poll()
+                
+                # 3. 准备 select 列表
+                reads = []
+                if proc.stdout: reads.append(proc.stdout)
+                if proc.stderr: reads.append(proc.stderr)
+                
+                # 如果没有可读的（例如管道已关），且进程已退出，结束
+                if not reads and return_code is not None:
+                    break
+
+                # 4. 执行 select (设为较短超时以便频繁 check time/poll)
+                try:
+                    readable, _, _ = select.select(reads, [], [], 0.5)
+                except ValueError:
+                    # Select failed (possibly file descriptor closed), break loop if process done
+                    if return_code is not None:
+                         break
+                    else:
+                        continue # Retry
+
+                # 5. 读取数据
+                for f in readable:
+                    try:
+                        # 使用 os.read 读取底层 FD，确保非阻塞
+                        # read() on TextIOWrapper 可能会即使 select 可读也阻塞（因为缓冲或解码）
+                        fd = f.fileno()
+                        b_chunk = os.read(fd, 4096)
+                        
+                        if not b_chunk:
+                            # EOF received (empty bytes)
+                            pass
+                        else:
+                            chunk = b_chunk.decode('utf-8', errors='replace')
+                            if f is proc.stdout:
+                                stdout_chunks.append(chunk)
+                            else:
+                                stderr_chunks.append(chunk)
+                    except OSError:
+                        pass
+                    except Exception as e:
+                       pass
+                
+                # 6. 退出条件判断
+                if return_code is not None:
+                    if exit_time is None:
+                        exit_time = time.time()
+                    
+                    # 如果超过宽限期，强制退出循环
+                    if time.time() - exit_time > grace_period:
+                        break
+                    
+                    # 另外如果 readable 为空（管道已空/关闭），也退出
+                    # 但为了保险（数据在内核缓冲），我们主要依赖宽限期或 EOF
+                    if not readable:
+                         pass
+                    
+            # 循环结束后，确保关闭管道防止 ResourceWarning
+            if proc.stdout: proc.stdout.close()
+            if proc.stderr: proc.stderr.close()
+            
+            # 手动清理：确保所有子进程（僵尸）都被杀掉
+            # 无论成功失败，既然主任务结束了，就清理现场
             try:
-                stdout, stderr = proc.communicate(timeout=timeout)
-                exit_code = proc.returncode
-            except subprocess.TimeoutExpired:
-                # 使用 os.killpg 杀死整个进程组
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except Exception:
-                    pass  # 进程可能已经结束
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                pass
 
-                try:
-                    stdout, stderr = proc.communicate(timeout=0.1)
-                except Exception:
-                    stdout, stderr = "", ""
+            exit_code = return_code if return_code is not None else -1
+            stdout = "".join(stdout_chunks)
+            stderr = "".join(stderr_chunks)
 
-                return (
-                    f"[ERROR] Command timed out after {timeout} seconds.\n"
-                    f"Command: {command}\n"
-                    f"Partial stdout:\n{self._truncate(stdout, MAX_STDOUT_CHARS) if stdout else '(none)'}\n"
-                    f"Partial stderr:\n{self._truncate(stderr, MAX_STDERR_CHARS) if stderr else '(none)'}"
-                )
-
+        except subprocess.TimeoutExpired:
+            # 超时处理
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                pass
+            
+            return (
+                f"[ERROR] Command timed out after {timeout} seconds.\n"
+                f"Command: {command}\n"
+                f"Partial stdout:\n{self._truncate(''.join(stdout_chunks), MAX_STDOUT_CHARS)}\n"
+                f"Partial stderr:\n{self._truncate(''.join(stderr_chunks), MAX_STDERR_CHARS)}"
+            )
+            
         except Exception as e:
             return f"[ERROR] Failed to execute command: {e}"
 

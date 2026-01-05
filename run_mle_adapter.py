@@ -165,8 +165,8 @@ Save your predictions to: {submission_dir / "submission.csv"}
     # =========================================
     
     try:
-        llm_client = config.create_llm_client()
-        log_msg("INFO", "LLM 客户端创建成功")
+        llm = config.create_langchain_llm()
+        log_msg("INFO", "LangChain LLM 客户端创建成功")
     except Exception as e:
         log_msg("ERROR", f"LLM 客户端创建失败: {e}")
         return
@@ -199,7 +199,7 @@ Save your predictions to: {submission_dir / "submission.csv"}
         agent_pool = AgentPool.from_configs(
             agents_num=config.agent_num,
             config=agent_config_dict,
-            llm_client=llm_client
+            llm=llm
         )
         log_msg("INFO", f"AgentPool 创建成功，共 {config.agent_num} 个 Agent")
     except Exception as e:
