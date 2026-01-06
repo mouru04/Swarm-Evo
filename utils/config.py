@@ -80,6 +80,7 @@ class Config:
         self.random_seed = self._get_required_int_env('RANDOM_SEED')
         self.max_concurrent_agents = self._get_optional_int_env('MAX_CONCURRENT_AGENTS', 1)
         self.agent_timeout = self._get_required_int_env('AGENT_TIMEOUT')
+        self.max_retries = self._get_required_int_env('MAX_RETRIES')
         self.agent_num = self._get_required_int_env('AGENT_NUM')
         self.agent_config_dir = self._get_required_env('AGENT_CONFIG_DIR')
 
@@ -196,7 +197,9 @@ class Config:
         """
         return OpenAI(
             api_key=self.api_key,
-            base_url=self.api_base
+            base_url=self.api_base,
+            timeout=self.agent_timeout,
+            max_retries=self.max_retries
         )
 
     def create_langchain_llm(self):
@@ -218,6 +221,8 @@ class Config:
             api_key=self.api_key,
             base_url=self.api_base,
             temperature=0.2,
+            request_timeout=self.agent_timeout,
+            max_retries=self.max_retries,
         )
 
 
