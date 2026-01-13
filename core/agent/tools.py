@@ -353,7 +353,7 @@ class TerminalTool(BaseTool):
             f'export PATH="{safe_bin_dir}:$PATH" '
             f'&& eval "$({conda_exe} shell.bash hook)" '
             f"&& conda activate {env_name} "
-            f"&& exec {command}"
+            f"&& {command}"
         )
 
         stdout_chunks = []

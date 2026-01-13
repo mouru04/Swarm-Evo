@@ -155,9 +155,19 @@ class AgentGraphBuilder:
             # 记录响应信息
             if isinstance(response, AIMessage):
                 # 准备 JSON 日志数据
+                request_data = []
+                for msg in messages:
+                    msg_dict = {"type": msg.type, "content": msg.content}
+                    if isinstance(msg, ToolMessage):
+                        msg_dict["tool_call_id"] = msg.tool_call_id
+                    if isinstance(msg, AIMessage) and msg.tool_calls:
+                        msg_dict["tool_calls"] = msg.tool_calls
+                    request_data.append(msg_dict)
+
                 json_data = {
                     "agent_name": agent_name,
                     "step_count": step_count,
+                    "request": request_data,
                     "response": {
                         "content": response.content,
                         "tool_calls": response.tool_calls,

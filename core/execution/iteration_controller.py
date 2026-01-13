@@ -34,6 +34,12 @@ class IterationController:
     async def run_competition(self):
         log_msg("INFO", "Starting competition loop...")
         while self.current_epoch < self.config.mle_bench_epoch_limit:
+            # [新增] 时间限制检查逻辑
+            elapsed_time = time.time() - self.start_time
+            if elapsed_time > self.config.time_limit_seconds:
+                log_msg("WARNING", f"已达到时间限制 ({self.config.time_limit_seconds}秒), 停止竞赛循环。当前耗时: {elapsed_time:.2f}秒")
+                break
+
             self.current_epoch += 1
             log_msg("INFO", f"--- Starting Epoch {self.current_epoch} ---")
             await self.run_epoch()
