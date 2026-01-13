@@ -15,7 +15,7 @@
 - **版本管理**: Git
 
 ## 2. 常用命令 (Commands)
-- **安装依赖**:
+- **安装依赖**: 
   ```bash
   conda create -n swarm-evo python=3.12 -y
   conda activate swarm-evo
@@ -33,7 +33,7 @@
 2. **草稿 (Drafting)**: 如果有任何思路不清晰或需要推演复杂逻辑，**务必优先**在 `draft.md` 中撰写草稿，理清思路。
 3. **计划 (Plan)**: 正式编码前，**必须**输出开发计划（Artifact: implementation_plan.md），内容必须严格包含：
    - **1.1 摘要 (Summary)**: 1-2句话的简单总结。
-   - **1.2 审查点 (User Review Required)**: 明确列出整个计划中不清楚、需要用户审查和确认的部分。若无，请注明"无"。
+   - **1.2 审查点 (User Review Required)**: 明确列出整个计划中不清楚、需要用户审查和确认的部分。若无，请注明“无”。
    - **1.3 拟议变更 (Proposed Changes)**:
      - 以 **文件名 + 修改内容** 的形式列出。
      - 修改内容必须精确到 **函数/方法级别 (Function-level)**。
@@ -75,12 +75,12 @@
   - 示例：
     ```python
     from utils.logger_system import log_msg, log_json
-
+    
     # 文本日志
     log_msg("INFO", "Agent 开始执行任务")
     log_msg("WARNING", "检测到潜在问题")
     log_msg("ERROR", "任务执行失败: xxx")  # 自动 raise Exception
-
+    
     # JSON 日志
     log_json({"agent_name": "Agent1", "step": 3, "action": "tool_call"})
     ```
