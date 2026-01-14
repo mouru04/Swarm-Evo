@@ -101,6 +101,11 @@ class Config:
         self.explore_ratio = self._get_required_float_env('EXPLORE_RATIO')
         self.epoch_task_num = self._get_required_int_env('EPOCH_TASK_NUM')
 
+        # 第七阶段：进化策略配置（可插拔，指定1/默认为1，指定0则为0）
+        self.use_pheromone_gene_selection = self._get_optional_int_env(
+            "USE_PHEROMONE_GENE_SELECTION", 1
+        ) == 1
+
         self._initialized = True
 
     def _get_required_env(self, key: str) -> str:

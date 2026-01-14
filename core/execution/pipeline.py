@@ -26,6 +26,8 @@ class Pipeline:
         self.temporary_storage: Dict[str, Any] = {}
         self.journal = journal
         self.config = get_config()
+        # NEW: node-level logical time (for recency)
+        self.current_node_step: int = 0
 
     def initialize(self):
         """
@@ -36,23 +38,15 @@ class Pipeline:
             for _ in range(self.config.init_task_num):
                 self._add_task_internal(self._create_task("explore"))
 
-    def _create_task(self, task_type: str, payload: Optional[Dict[str, Any]] = None) -> Task:
+    def _create_task(self, task_type: str, payload: Dict[str, Any] = None) -> Task:
         """
-        创建新任务实例。
-
-        Args:
-            task_type: 任务类型（explore/select/merge/review等）
-            payload: 任务负载数据，若为None则使用空字典
-
-        Returns:
-            Task: 新创建的任务对象
+        创建新任务实例
         """
-        payload_dict = payload if payload is not None else {}
         return Task(
             id=str(uuid.uuid4()),
             type=task_type,
             priority=0,
-            payload=payload_dict,
+            payload=payload or {},
             status="pending",
             created_at=time.time(),
             agent_name=None,
@@ -127,16 +121,13 @@ class Pipeline:
                 payload = {"parent_id": parent_id} if parent_id else {}
                 new_tasks.append(self._create_task(task_type, payload))
             else:
-                task_type = "select"
+                task_type = "merge"
                 new_tasks.append(self._create_task(task_type))
         return new_tasks
 
     def _select_parent_node_by_pheromone(self) -> Optional[Node]:
         """
-        使用信息素采样选择父节点。
-
-        Returns:
-            Optional[Node]: 选中的父节点，若无有效节点则返回None
+        Selects a parent node using pheromone-based sampling.
         """
         valid_nodes = [
             node for node in self.journal.nodes.values()
@@ -145,7 +136,9 @@ class Pipeline:
         if not valid_nodes:
             return None
 
-        current_step = max((n.step for n in self.journal.nodes.values()), default=0)
+        current_step = self.current_node_step
+
+
         score_min = self.journal.score_min
         score_max = self.journal.score_max
 
@@ -153,14 +146,13 @@ class Pipeline:
         for node in valid_nodes:
             ensure_node_stats(node)
             pheromone = node.metadata.get("pheromone_node")
-            if pheromone is None:
-                pheromone = compute_node_pheromone(
-                    node,
-                    current_step=current_step,
-                    score_min=score_min,
-                    score_max=score_max,
-                )
-                node.metadata["pheromone_node"] = pheromone
+            pheromone = compute_node_pheromone(
+                node,
+                current_step=current_step,
+                score_min=score_min,
+                score_max=score_max,
+            )
+            node.metadata["pheromone_node"] = pheromone
             pheromones.append(pheromone)
 
         temperature = 3.0
@@ -171,13 +163,10 @@ class Pipeline:
 
         ensure_node_stats(parent_node)
         parent_node.metadata["usage_count"] += 1
-        pheromone_value = parent_node.metadata.get("pheromone_node")
-        if pheromone_value is None:
-            log_msg("ERROR", f"父节点 {parent_node.id} 的pheromone_node为None，无法使用信息素值进行日志记录")
         log_msg(
             "INFO",
             f"Selected parent {parent_node.id} with pheromone "
-            f"{pheromone_value:.4f}",
+            f"{parent_node.metadata.get('pheromone_node', 0.0):.4f}",
         )
         return parent_node
 
@@ -188,21 +177,22 @@ class Pipeline:
         with self.lock:
             self.tasks.sort(key=lambda t: t['created_at'])
 
-    def complete_task(self, task_id: str, result_nodes: Optional[List[Node]] = None, update_data: Optional[Dict[str, Any]] = None):
+    def complete_task(self, task_id: str, result_nodes: List[Node] = None, update_data: Optional[Dict[str, Any]] = None):
         """
         完成一个任务，并根据特定规则添加后续任务。
-
+        
         Args:
             task_id: 任务 ID
             result_nodes: 如果是 explore/merge 任务，传入新创建的 Node 对象列表
             update_data: 如果是 review 任务，传入更新数据 (score, summary, etc.)
-
+        
         规则:
         - explore -> review (Priority Insert)
         - select -> merge (Priority Insert) -> Merge 任务创建逻辑在此处或 Controller 触发
         - merge -> review (Priority Insert)
         """
-        nodes_to_add = result_nodes if result_nodes is not None else []
+        if result_nodes is None:
+            result_nodes = []
 
         with self.lock:
             # 查找并更新任务状态
@@ -218,11 +208,23 @@ class Pipeline:
             created_node_ids = []
             
             if task['type'] in ['explore', 'merge']:
-                if nodes_to_add:
-                    for node in nodes_to_add:
+                if result_nodes:
+                    for node in result_nodes:
+                        
+                        # 1. 递增全局 node 时间
+                        self.current_node_step += 1
+
+                        #  2. 在节点创建时写入 node_step
+                        ensure_node_stats(node)
+                        node.metadata["node_step"] = self.current_node_step
                         self.journal.add_node(node)
                         created_node_ids.append(node.id)
+                        
                         log_msg("INFO", f"Pipeline added Node {node.id} for task {task_id}")
+                        log_msg(
+                            "DEBUG",
+                            f"[GENE-DEBUG] Node {node.id[:6]} genes = {list(node.genes.keys())}"
+                        )
             
             elif task['type'] == 'review':
                 if update_data:
@@ -239,19 +241,11 @@ class Pipeline:
                             ensure_node_stats(node)
                             success = node.score is not None and not node.is_buggy
                             if success:
-                                current_score_min = self.journal.score_min
-                                current_score_max = self.journal.score_max
-                                if current_score_min is None:
+                                if self.journal.score_min is None or node.score < self.journal.score_min:
                                     self.journal.score_min = node.score
-                                else:
-                                    if node.score < current_score_min:  # type: ignore
-                                        self.journal.score_min = node.score
-                                if current_score_max is None:
+                                if self.journal.score_max is None or node.score > self.journal.score_max:
                                     self.journal.score_max = node.score
-                                else:
-                                    if node.score > current_score_max:  # type: ignore
-                                        self.journal.score_max = node.score
-                            current_step = max((n.step for n in self.journal.nodes.values()), default=0)
+                            current_step = self.current_node_step
                             node.metadata["pheromone_node"] = compute_node_pheromone(
                                 node,
                                 current_step=current_step,
@@ -266,10 +260,7 @@ class Pipeline:
                                     ensure_node_stats(parent)
                                     parent.metadata["success_count"] += 1
                             log_msg("INFO", f"Pipeline updated Node {target_id} with score {node.score}")
-                            pheromone_value = node.metadata.get("pheromone_node")
-                            if pheromone_value is None:
-                                log_msg("ERROR", f"节点 {node.id} 的pheromone_node为None，无法使用信息素值进行日志记录")
-                            log_msg("INFO", f"[PHEROMONE-UPDATE] Node={node.id[:6]} score={node.score} pheromone={pheromone_value:.4f}")
+                            log_msg("INFO",f"[PHEROMONE-UPDATE] Node={node.id[:6]} "f"score={node.score} "f"pheromone={node.metadata.get('pheromone_node'):.4f}")
                         else:
                             log_msg("WARNING", f"Review target node {target_id} not found.")
  
@@ -291,9 +282,6 @@ class Pipeline:
                     log_msg("WARNING", "Explore task completed without any result nodes. Skipping Review.")
                     return
 
-            elif task['type'] == 'select':
-                # Select -> Merge logic remains in Controller for now.
-                pass 
 
             elif task['type'] == 'merge':
                 next_task_type = 'review'

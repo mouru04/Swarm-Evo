@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from typing import Dict, List, Any, Optional
+from utils.logger_system import log_msg
 
 from core.execution.journal import Node, Journal
 
@@ -56,6 +57,14 @@ class GeneRegistry:
             return
         for locus in _LOCUS_NAMES:
             gene_content = node.genes.get(locus) if node.genes else None
+
+            # 临时验证点 A：GeneRegistry 是否真的读到 gene
+            log_msg(
+                "DEBUG",
+                f"[GENE-REGISTRY] node={node.id[:6]} locus={locus} "
+                f"len={len(gene_content) if gene_content else 0}"
+            )
+            
             if not gene_content:
                 continue
             normalized = normalize_gene_text(gene_content)
@@ -75,7 +84,7 @@ class GeneRegistry:
             )
             entry["acc_sum"] += float(pheromone_value)
             entry["count"] += 1
-            entry["pheromone"] = max(entry["acc_sum"] / entry["count"], 1e-9)
+            entry["pheromone"] = entry["acc_sum"] / entry["count"]
             entry["last_seen_step"] = node.step
             entry["content"] = gene_content
             entry["source_node_id"] = node.id

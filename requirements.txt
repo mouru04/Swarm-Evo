@@ -12,3 +12,9 @@ scikit-learn
 pillow
 chromadb
 mem0ai
+faiss-cpu
+dppy
+transformers
+torch
+numpy
+sentence-transformers>=2.6.0
