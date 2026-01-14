@@ -23,13 +23,15 @@ class IterationController:
         task_pipeline: Pipeline,
         journal: Journal,
         config: Any,
-        competition_description: str = ""
+        competition_description: str = "",
+        conda_packages: str = ""
     ):
         self.agent_pool = agent_pool
         self.task_pipeline = task_pipeline
         self.journal = journal
         self.config = config
         self.competition_description = competition_description
+        self.conda_packages = conda_packages
 
         self.current_epoch = 0
         self.start_time = time.time()
@@ -110,19 +112,23 @@ class IterationController:
                 )
 
         # =====================================================
-        # 2.构造 PromptContext
+        # 2.统一确定步数限制
         # =====================================================
-        prompt_context = self._construct_prompt_context(task)
+        current_max_steps = agent.max_steps
+        if task_type == 'review':
+            current_max_steps = 1
+
+        # =====================================================
+        # 3.构造 PromptContext
+        # =====================================================
+        prompt_context = self._construct_prompt_context(task, step_limit=current_max_steps)
         task_description = self._get_task_description(task)
         
         agent_input_state = {
             "task_description": task_description,
-            "prompt_context": prompt_context
+            "prompt_context": prompt_context,
+            "max_steps": current_max_steps
         }
-        
-        # [Constraint] Review tasks restricted to single step (no tool usage)
-        if task_type == 'review':
-             agent_input_state["max_steps"] = 1
 
         try:
             result = await agent(agent_input_state)
@@ -235,9 +241,13 @@ class IterationController:
             self.gene_registry.update_from_reviewed_node(node)
             self._gene_registry_updated_nodes.add(node_id)
 
-    def _construct_prompt_context(self, task: Dict[str, Any]) -> PromptContext:
+    def _construct_prompt_context(self, task: Dict[str, Any], step_limit: int) -> PromptContext:
         """
         Build PromptContext from task payload and global config.
+        
+        参数:
+            task: 任务字典
+            step_limit: 步数限制（已根据任务类型确定）
         """
         payload = task.get('payload', {})
         
@@ -305,8 +315,9 @@ class IterationController:
             iteration=self.current_epoch,
             elapsed_seconds=elapsed,
             remaining_seconds=remaining,
-            conda_packages="", 
+            conda_packages=self.conda_packages,
             task_description=self._get_task_description(task),
+            step_limit=step_limit,
             
             parent_code=payload.get('parent_code'),
             parent_feedback=payload.get('parent_feedback'),
@@ -341,9 +352,6 @@ class IterationController:
         else:
             task_instruction = f"Execute task of type {t_type}"
         
-        # Prepend competition description if available
-        if self.competition_description:
-            return f"# Competition Background\n{self.competition_description}\n\n---\n\n# Your Task\n{task_instruction}"
         return task_instruction
 
     def _create_nodes_from_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> List[Node]:
