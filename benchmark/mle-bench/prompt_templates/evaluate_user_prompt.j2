@@ -33,25 +33,6 @@ You must rely ONLY on these logs to make a judgement.
 
 ---
 
-# Available Tools
-The following tools are available for you to use.
-
-1) list_directory
-input: path
-function: List directory contents. Returns DirectoryListing(...) on success.
-
-2) read_file
-input: file_path
-function: Read file content (auto-truncates large files). Returns FileReadResult(...) on success.
-
-3) terminal
-input: command
-function: Execute a shell command (stdout/stderr auto-truncated). Returns ShellResult(...) on success.
-
-On failure, tools return ErrorInfo(...).
-
----
-
 # Evaluation Instruction (IMPORTANT)
 
 You are an **expert judge for a data science competition**.
@@ -98,12 +79,18 @@ You MUST give a CRITICAL WARNING in the summary:
 * If score low → hypothesize reasons (overfitting, misformatted labels, wrong loss, etc.).
 * Always end with an **actionable next step** the agent should perform.
 
+# Evaluation Guidances
+- **Evidence-Based**: Judge ONLY based on execution logs. Don't speculate.
+- **Precise Diagnosis**: Quote exact error messages and line numbers when identifying bugs.
+- **Actionable Feedback**: Every summary must include a concrete next step for improvement.
+- **Strict Scoring**: Only extract scores explicitly printed in logs. If missing, flag it clearly.
+
 ---
 
 # Instructions & Output Format
 
-1. **Analyze**: Use tools to inspect the code and logs if needed.
-2. **Evaluate**: Determine a score, summary, and bug status.
+1. **Analyze**: Review the provided code and execution logs carefully.
+2. **Evaluate**: Determine a score, summary, and bug status based on the logs.
 3. **Output**: Respond with the `EvaluationResult` JSON object directly. Do not wrap it in `ActionStep`.
 
 ```json

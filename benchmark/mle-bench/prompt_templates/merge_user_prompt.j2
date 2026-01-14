@@ -107,8 +107,15 @@ Your generated code MUST maintain the same 7-component structure as the parent s
 
 1. **Extract**: Copy the relevant code blocks (genes) from the specified Parent Solutions.
 2. **Merge**: Assemble them into a single, cohesive script using the structure template below.
-3. **Resolve Conflicts**: Fix any variable naming clashes, import errors, or compatibility issues between the different genes.
+3. **Resolve Conflicts**: Fix any variable naming clashes, import errors, or compatibility issues. CRITICAL: unexpected CPU usage is FORBIDDEN. You MUST check `device` definition and ensure it uses `cuda` if available.
 4. **Save**: You MUST save the final code to `solution.py`.
+
+# Merging Guidances
+- **Missing Sections**: If a section is missing, use the best alternative from other parents. Never leave empty.
+- **Main Loop Integration**: Combine logic from ALL parents, not just one. Ensure all sections are initialized and used.
+- **Import Consolidation**: Merge all imports from all parents. Watch for naming conflicts (e.g., two different `DataLoader` classes).
+- **Device Consistency**: Use ONE consistent device variable throughout. Check that all sections respect it.
+- **Cross-Section Verification**: Verify that section components reference each other correctly (e.g., model uses input shape from DataManager).
 
 **Required Structure Template:**
 ```python

@@ -33,17 +33,18 @@ class LoggerSystem:
         """
         Log a message to the text log file and print to terminal.
         If level is ERROR or CRITICAL, raises an Exception.
-        
+
         Args:
             level: Log level/type (e.g., 'INFO', 'WARNING', 'ERROR')
             message: The message to log
         """
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] [{level}] {message}\n"
-        
+
         with open(self.text_log_path, 'a', encoding='utf-8') as f:
             f.write(log_entry)
-        
+            f.flush()  # 立即写入磁盘
+
         # Dual print to terminal
         print(log_entry.strip())
 
