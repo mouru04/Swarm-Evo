@@ -411,7 +411,7 @@ class BaseReActAgent:
                     "step_count": step_count
                 }
 
-            success = final_answer is not None and step_count < self.max_steps
+            success = final_answer is not None and step_count <= self.max_steps
 
             log_msg("INFO", f"Agent '{self.name}' 任务完成, 步数: {step_count}, 成功: {success}")
 

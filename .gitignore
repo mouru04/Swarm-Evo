@@ -6,6 +6,8 @@
 tests/
 dataset/
 workspace/
+archives/
+*.pth
 
 # Python
 __pycache__/
