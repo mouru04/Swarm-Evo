@@ -1,24 +1,18 @@
 import os
 import shutil
 import zipfile
-import os
-import shutil
-import zipfile
 import asyncio
 import time
 import json
 import traceback
-from typing import List, Dict, Any, Optional, Union, Set
+from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass, field
-import uuid
 from core.execution.pipeline import Pipeline
 from core.agent.agent_pool import AgentPool
 from core.agent.base_agent import BaseReActAgent
 from core.execution.journal import Journal, Node
 from core.execution.task_class import Task
 from core.agent.prompt_manager import PromptContext
-from core.evolution.gene_selector import select_gene_plan
-from core.evolution.gene_registry import GeneRegistry
 from core.evolution.gene_selector import select_gene_plan
 from core.evolution.gene_registry import GeneRegistry
 from utils.logger_system import log_msg
@@ -52,13 +46,11 @@ class IterationController:
     负责管理Agent的执行流程、任务路由和优化触发
     """
 
-    # 类常量 
+    # 类常量
     SCORE_THRESHOLD = 0.65               # 学习/反思阈值
     REFLECTION_TRIGGER_THRESHOLD = 5     # 反思触发使用次数阈值
-    RECENT_NODES_COUNT = 4               # 选择任务时考虑的最近节点数量
     TEMPLATE_MAP = {
         'review': 'evaluate_user_prompt.j2',
-        'select': 'select_user_prompt.j2',
         'merge': 'merge_user_prompt.j2',
         'explore': 'explore_user_prompt.j2'
     }
@@ -362,9 +354,7 @@ class IterationController:
         task_type = task['type']
 
         # 路由到具体的任务处理器
-        if task_type == 'select':
-            await self._process_select_task(task, execution_result)
-        elif task_type == 'review':
+        if task_type == 'review':
             await self._process_review_task(agent, task, execution_result)
         elif task_type in ['explore', 'merge']:
             await self._process_explore_merge_task(agent, task, execution_result)
@@ -392,40 +382,6 @@ class IterationController:
             await self.version_manager.record_prompt_usage(agent.name, task_type)
 
         # 不创建节点、不归档文件
-
-    async def _process_select_task(self, task: Task, execution_result: TaskExecutionResult):
-        """
-        处理Select任务的成功结果
-
-        逻辑：
-        1. 暂存gene_plan到Pipeline
-        2. 创建Merge任务并插入Pipeline
-        """
-        task_id = task['id']
-        agent_output = execution_result.agent_output
-        gene_plan = agent_output
-
-        # 暂存gene_plan供Merge任务使用
-        self.task_pipeline.store_result(task_id, gene_plan)
-
-        # 创建Merge任务
-        merge_payload = {
-            "candidate_ids": task['payload'].get('candidate_ids', [])
-        }
-
-        merge_task = {
-            "id": str(uuid.uuid4()),
-            "type": "merge",
-            "priority": 0,  # Merge优先
-            "payload": merge_payload,
-            "status": "pending",
-            "created_at": time.time(),
-            "agent_name": None,
-            "dependencies": {"gene_plan_source": task_id}
-        }
-
-        self.task_pipeline.add_urgent_task(merge_task)
-        log_msg("INFO", f"Select任务完成，已创建Merge任务 {merge_task['id']}")
 
     async def _process_review_task(
         self,
@@ -581,7 +537,6 @@ class IterationController:
                         payload['parent_feedback'] = parent_node.summary
                         # logs 对应模板中的 parent_history
                         payload['parent_history'] = parent_node.logs
-                        payload['parent_history'] = parent_node.logs
                         payload['parent_score'] = parent_node.score
 
         # 动态填充数据
@@ -590,13 +545,7 @@ class IterationController:
         solution_code = None
         execution_logs = None
 
-        if task['type'] == 'select':
-            # 获取最近N个节点作为候选
-            recent_nodes = list(self.journal.nodes.values())[-self.RECENT_NODES_COUNT:]
-            candidates_data = {n.id: n.code for n in recent_nodes if n.code}
-            payload['candidate_ids'] = list(candidates_data.keys())
-
-        elif task['type'] == 'merge':
+        if task['type'] == 'merge':
             # Merge 任务逻辑更新
             gene_plan_data = payload.get('gene_plan')
             # 仍然需要 candidate code 用于 materialization
@@ -657,11 +606,9 @@ class IterationController:
         t_type = task['type']
 
         task_instructions = {
-            'select': "Please select the best solution strategy from the candidates.",
             'explore': "Please explore a new solution based on the plan.",
             'merge': "Please merge the selected strategies into a new solution.",
-            'review': "Please review the solution and provide feedback.",
-            'debug': "Please debug the current solution."
+            'review': "Please review the solution and provide feedback."
         }
 
         task_instruction = task_instructions.get(t_type, f"Execute task of type {t_type}")

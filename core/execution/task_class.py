@@ -3,7 +3,7 @@ from typing import TypedDict, Dict, Any, Optional
 class Task(TypedDict):
     """任务定义"""
     id: str
-    type: str  # "explore", "merge", "select", "review"
+    type: str  # "explore", "merge", "review"
     priority: int # 越高越优先
     payload: Dict[str, Any] # 任务上下文 (prompt params, parent nodes etc.)
     status: str # "pending", "running", "completed", "failed"

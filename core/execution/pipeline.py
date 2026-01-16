@@ -188,7 +188,6 @@ class Pipeline:
         
         规则:
         - explore -> review (Priority Insert)
-        - select -> merge (Priority Insert) -> Merge 任务创建逻辑在此处或 Controller 触发
         - merge -> review (Priority Insert)
         """
         if result_nodes is None:

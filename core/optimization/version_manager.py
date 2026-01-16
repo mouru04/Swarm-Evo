@@ -152,7 +152,6 @@ class AgentVersionManager:
     TEMPLATE_MAP = {
         "explore": "explore_user_prompt.j2",
         "merge": "merge_user_prompt.j2",
-        "select": "select_user_prompt.j2",
         "review": "evaluate_user_prompt.j2"
     }
     ACCURACY_WEIGHT = 0.6                                # 准确率权重
