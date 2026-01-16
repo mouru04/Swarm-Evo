@@ -22,8 +22,6 @@ class PerformanceMetrics:
     """性能指标"""
     avg_accuracy: float  # 平均准确率
     avg_generation_rate: float  # 平均生成率
-    total_reviews: int  # 总review数
-    successful_reviews: int  # 有分数的review数
     submission_count: int  # 有submission的数量
 
 
@@ -54,6 +52,7 @@ class PromptReflector:
         prompt_type: str,
         prompt_content: str,
         metrics: PerformanceMetrics,
+        used_count: int,
         additional_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
@@ -63,6 +62,7 @@ class PromptReflector:
             prompt_type: prompt类型 ("explore" 或 "merge")
             prompt_content: 当前prompt内容
             metrics: 性能指标
+            used_count: prompt使用次数
             additional_context: 额外的上下文信息
 
         返回:
@@ -73,6 +73,7 @@ class PromptReflector:
             prompt_type=prompt_type,
             prompt_content=prompt_content,
             metrics=metrics,
+            used_count=used_count,
             additional_context=additional_context or {}
         )
 
@@ -99,6 +100,7 @@ class PromptReflector:
         prompt_type: str,
         prompt_content: str,
         metrics: PerformanceMetrics,
+        used_count: int,
         additional_context: Dict[str, Any]
     ) -> List:
         """
@@ -108,19 +110,13 @@ class PromptReflector:
         template_content = self.prompt_manager.get_template("reflector_prompt.j2")
 
         # 准备模板变量
-        success_rate = (
-            metrics.successful_reviews / metrics.total_reviews
-            if metrics.total_reviews > 0 else 0
-        )
         template_vars = {
             "prompt_type": prompt_type,
             "prompt_content": prompt_content,
             "avg_accuracy": metrics.avg_accuracy,
             "avg_generation_rate": metrics.avg_generation_rate,
-            "total_reviews": metrics.total_reviews,
-            "successful_reviews": metrics.successful_reviews,
+            "used_count": used_count,
             "submission_count": metrics.submission_count,
-            "success_rate": success_rate,
             "additional_context": additional_context
         }
 
@@ -154,7 +150,7 @@ class PromptReflector:
         additional_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        分析特定prompt版本的执行效果，生成改进建议（guidance）
+        分析特定prompt版本的执行效果，生成改进建议（reflection）
 
         这是核心方法，用于反思器-生成器循环。
 
@@ -163,26 +159,23 @@ class PromptReflector:
             additional_context: 额外的上下文信息
 
         返回:
-            包含guidance和详细分析的结果字典
+            包含完整反思结果（diagnosis, suggestions等）的字典
         """
         # 第一阶段: 从版本记录中提取review结果
         review_results = []
         for review in version_record.review_records:
             review_results.append({
                 'num': review.num,
-                'score': review.score,
+                'task_score': review.task_score,
                 'has_submission': review.has_submission,
-                'timestamp': review.timestamp,
-                'node_id': review.node_id,
-                'task_id': review.task_id
+                'task_id': review.task_id,
+                'node_count': len(review.node_metadata)
             })
 
         # 第二阶段: 使用版本记录中已计算的指标
         metrics_from_version = PerformanceMetrics(
             avg_accuracy=version_record.avg_accuracy,
             avg_generation_rate=version_record.avg_generation_rate,
-            total_reviews=version_record.used_count,
-            successful_reviews=len([r for r in version_record.review_records if r.score is not None]),
             submission_count=len([r for r in version_record.review_records if r.has_submission])
         )
 
@@ -191,6 +184,7 @@ class PromptReflector:
             prompt_type=version_record.prompt_type,
             prompt_content=version_record.prompt_content,
             metrics=metrics_from_version,
+            used_count=version_record.used_count,
             additional_context={
                 "review_results": review_results,
                 "version_id": version_record.version_id,
@@ -206,8 +200,7 @@ class PromptReflector:
                 "avg_accuracy": metrics_from_version.avg_accuracy,
                 "avg_generation_rate": metrics_from_version.avg_generation_rate,
                 "composite_score": version_record.composite_score,
-                "total_reviews": metrics_from_version.total_reviews,
-                "successful_reviews": metrics_from_version.successful_reviews,
+                "used_count": version_record.used_count,
                 "submission_count": metrics_from_version.submission_count
             },
             "review_records": review_results,
@@ -215,28 +208,5 @@ class PromptReflector:
             "current_prompt": version_record.prompt_content
         }
 
-        # 第五阶段: 保存反思结果到文件
-        self._save_reflection_result(result)
-
         return result
 
-    def _save_reflection_result(self, result: Dict[str, Any]) -> None:
-        """
-        保存反思结果到文件
-
-        参数:
-            result: 反思结果字典
-        """
-        # 生成文件名：reflection_{prompt_type}_{timestamp}.json
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prompt_type = result["prompt_type"]
-        filename = f"reflection_{prompt_type}_{timestamp}.json"
-
-        # 使用公共工具保存
-        logs_dir = "workspace/logs"
-        FileSaver.save_result_to_json(
-            result=result,
-            filename=filename,
-            storage_dir=logs_dir,
-            result_type="反思"
-        )

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import shutil
+import select
+import signal
 import subprocess
 import time
 from typing import Optional, Type
@@ -285,12 +287,46 @@ class TerminalTool(BaseTool):
         """
         super().__init__(conda_env_name=conda_env_name, **kwargs)
 
-    def _inject_force_flags(self, command: str) -> str:
-        """为常见交互命令注入强制标志。"""
-        if "unzip" in command:
-            if "-o" not in command and "-n" not in command:
-                command = command.replace("unzip", "unzip -o -q")
-        return command
+    def _create_safe_bin(self) -> str:
+        """
+        创建包含非交互式 wrapper 脚本的安全 bin 目录。
+        返回该目录的绝对路径。
+        """
+        safe_bin_dir = os.path.expanduser("~/.agent_safe_bin")
+        os.makedirs(safe_bin_dir, exist_ok=True)
+
+        # 定义 wrapper 脚本内容
+        # 核心思想：强制添加 -o -f -y 等非交互参数
+        wrappers = {
+            "unzip": '#!/bin/bash\n/usr/bin/unzip -o -q "$@"',
+            "cp": '#!/bin/bash\n/bin/cp -f "$@"',
+            "mv": '#!/bin/bash\n/bin/mv -f "$@"',
+            "rm": '#!/bin/bash\n/bin/rm -f "$@"',
+        }
+
+        for cmd, script_content in wrappers.items():
+            wrapper_path = os.path.join(safe_bin_dir, cmd)
+            # 仅在文件内容不同或不存在时写入，减少 IO
+            write_needed = True
+            if os.path.exists(wrapper_path):
+                try:
+                    with open(wrapper_path, "r") as f:
+                        if f.read().strip() == script_content.strip():
+                            write_needed = False
+                except Exception:
+                    pass
+            
+            if write_needed:
+                try:
+                    with open(wrapper_path, "w") as f:
+                        f.write(script_content)
+                    # chmod +x
+                    st = os.stat(wrapper_path)
+                    os.chmod(wrapper_path, st.st_mode | 0o111)
+                except Exception:
+                    pass  # 如果写入失败，尽力而为
+
+        return safe_bin_dir
 
     def _run(self, command: str) -> str:
         """执行 Shell 命令。"""
@@ -303,40 +339,138 @@ class TerminalTool(BaseTool):
         if shutil.which(conda_exe) is None:
             return f"[ERROR] Conda executable not found: {conda_exe}"
 
-        # 注入强制标志
-        command = self._inject_force_flags(command)
+        # 准备 safe bin
+        safe_bin_dir = self._create_safe_bin()
 
         # 决定超时时间
-        timeout = self.long_running_timeout if "python" in command else self.default_timeout
+        # 仅对 solution.py 或 train.py 使用长超时
+        is_long_running = "solution.py" in command or "train.py" in command
+        timeout = self.long_running_timeout if is_long_running else self.default_timeout
 
         # 构建激活链
+        # 注意：我们将 safe_bin_dir 添加到 PATH 的最前面，优先级最高
         activation_chain = (
-            f'eval "$({conda_exe} shell.bash hook)" '
+            f'export PATH="{safe_bin_dir}:$PATH" '
+            f'&& eval "$({conda_exe} shell.bash hook)" '
             f"&& conda activate {env_name} "
             f"&& {command}"
         )
 
+        stdout_chunks = []
+        stderr_chunks = []
+        start_time = time.time()
+        
         try:
+            # start_new_session=True 用于创建新的进程组
+            # 这允许我们在超时时杀死整个进程组，防止僵尸管道
             proc = subprocess.Popen(
                 ["/bin/bash", "-lc", activation_chain],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
                 text=True,
+                start_new_session=True,
             )
+            # 缓存 PGID，因为如果进程先退出被 poll() 回收，os.getpgid(proc.pid) 会失效
+            pgid = proc.pid
 
+            # 使用 select 进行非阻塞读取和活性检测
+            # 定义宽限期：主进程退出后，最多再读 1 秒
+            grace_period = 1.0
+            exit_time = None
+            
+            while True:
+                # 1. 检查超时
+                if time.time() - start_time > timeout:
+                    raise subprocess.TimeoutExpired(proc.args, timeout)
+                
+                # 2. 检查主进程状态
+                return_code = proc.poll()
+                
+                # 3. 准备 select 列表
+                reads = []
+                if proc.stdout: reads.append(proc.stdout)
+                if proc.stderr: reads.append(proc.stderr)
+                
+                # 如果没有可读的（例如管道已关），且进程已退出，结束
+                if not reads and return_code is not None:
+                    break
+
+                # 4. 执行 select (设为较短超时以便频繁 check time/poll)
+                try:
+                    readable, _, _ = select.select(reads, [], [], 0.5)
+                except ValueError:
+                    # Select failed (possibly file descriptor closed), break loop if process done
+                    if return_code is not None:
+                         break
+                    else:
+                        continue # Retry
+
+                # 5. 读取数据
+                for f in readable:
+                    try:
+                        # 使用 os.read 读取底层 FD，确保非阻塞
+                        # read() on TextIOWrapper 可能会即使 select 可读也阻塞（因为缓冲或解码）
+                        fd = f.fileno()
+                        b_chunk = os.read(fd, 4096)
+                        
+                        if not b_chunk:
+                            # EOF received (empty bytes)
+                            pass
+                        else:
+                            chunk = b_chunk.decode('utf-8', errors='replace')
+                            if f is proc.stdout:
+                                stdout_chunks.append(chunk)
+                            else:
+                                stderr_chunks.append(chunk)
+                    except OSError:
+                        pass
+                    except Exception as e:
+                       pass
+                
+                # 6. 退出条件判断
+                if return_code is not None:
+                    if exit_time is None:
+                        exit_time = time.time()
+                    
+                    # 如果超过宽限期，强制退出循环
+                    if time.time() - exit_time > grace_period:
+                        break
+                    
+                    # 另外如果 readable 为空（管道已空/关闭），也退出
+                    # 但为了保险（数据在内核缓冲），我们主要依赖宽限期或 EOF
+                    if not readable:
+                         pass
+                    
+            # 循环结束后，确保关闭管道防止 ResourceWarning
+            if proc.stdout: proc.stdout.close()
+            if proc.stderr: proc.stderr.close()
+            
+            # 手动清理：确保所有子进程（僵尸）都被杀掉
+            # 无论成功失败，既然主任务结束了，就清理现场
             try:
-                stdout, stderr = proc.communicate(timeout=timeout)
-                exit_code = proc.returncode
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout, stderr = proc.communicate()
-                return (
-                    f"[ERROR] Command timed out after {timeout} seconds.\n"
-                    f"Partial stdout:\n{self._truncate(stdout, MAX_STDOUT_CHARS) if stdout else '(none)'}\n"
-                    f"Partial stderr:\n{self._truncate(stderr, MAX_STDERR_CHARS) if stderr else '(none)'}"
-                )
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                pass
 
+            exit_code = return_code if return_code is not None else -1
+            stdout = "".join(stdout_chunks)
+            stderr = "".join(stderr_chunks)
+
+        except subprocess.TimeoutExpired:
+            # 超时处理
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                pass
+            
+            return (
+                f"[ERROR] Command timed out after {timeout} seconds.\n"
+                f"Command: {command}\n"
+                f"Partial stdout:\n{self._truncate(''.join(stdout_chunks), MAX_STDOUT_CHARS)}\n"
+                f"Partial stderr:\n{self._truncate(''.join(stderr_chunks), MAX_STDERR_CHARS)}"
+            )
+            
         except Exception as e:
             return f"[ERROR] Failed to execute command: {e}"
 

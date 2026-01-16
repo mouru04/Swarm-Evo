@@ -2,6 +2,7 @@ import asyncio
 import shutil
 import os
 import json
+import zipfile
 from pathlib import Path
 
 from utils.config import get_config
@@ -134,7 +135,8 @@ async def main_mle_bench_competition() -> None:
             task_pipeline=pipeline,
             journal=journal,
             config=config,
-            competition_description=description_content
+            competition_description=description_content,
+            conda_packages=conda_packages
         )
 
         # 4. 运行
@@ -152,6 +154,25 @@ async def main_mle_bench_competition() -> None:
         best_node = journal.get_best_node()
         if best_node:
              log_msg("INFO", f"最佳方案 ID: {best_node.id}, Score: {best_node.score}")
+             
+             # [NEW Logic] Extract archived solution and submission
+             if best_node.archive_path and os.path.exists(best_node.archive_path):
+                 final_submission_dir = os.path.join(config.mle_bench_workspace_dir, "final_submission")
+                 os.makedirs(final_submission_dir, exist_ok=True)
+                 
+                 try:
+                     with zipfile.ZipFile(best_node.archive_path, 'r') as zip_ref:
+                         zip_ref.extractall(final_submission_dir)
+                     log_msg("INFO", f"✅ 最终结果已提取至: {final_submission_dir}")
+                     
+                     # 可以在此处添加重命名逻辑，如果需要的话
+                     # 比如把解压出来的 solution.py 重命名为 best_solution.py
+                     
+                 except Exception as e:
+                     log_msg("ERROR", f"提取最终结果失败: {e}")
+             else:
+                 log_msg("WARNING", "最佳方案未找到归档文件，仅显示 Score。")
+                 
         else:
              log_msg("WARNING", "未找到有效方案")
 

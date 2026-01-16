@@ -155,9 +155,19 @@ class AgentGraphBuilder:
             # 记录响应信息
             if isinstance(response, AIMessage):
                 # 准备 JSON 日志数据
+                request_data = []
+                for msg in messages:
+                    msg_dict = {"type": msg.type, "content": msg.content}
+                    if isinstance(msg, ToolMessage):
+                        msg_dict["tool_call_id"] = msg.tool_call_id
+                    if isinstance(msg, AIMessage) and msg.tool_calls:
+                        msg_dict["tool_calls"] = msg.tool_calls
+                    request_data.append(msg_dict)
+
                 json_data = {
                     "agent_name": agent_name,
                     "step_count": step_count,
+                    "request": request_data,
                     "response": {
                         "content": response.content,
                         "tool_calls": response.tool_calls,
@@ -331,7 +341,8 @@ class BaseReActAgent:
     async def run(
         self, 
         task_instruction: str, 
-        prompt_context: PromptContext
+        prompt_context: PromptContext,
+        max_steps: Optional[int] = None
     ) -> AgentSessionResult:
         """
         执行 Agent 任务。
@@ -339,6 +350,7 @@ class BaseReActAgent:
         参数:
             task_instruction: 任务指令。
             prompt_context: 提示词上下文。
+            max_steps: 本次执行的最大步数限制 (可选，覆盖默认值)。
 
         返回:
             AgentSessionResult 执行结果。
@@ -351,11 +363,13 @@ class BaseReActAgent:
             task_instruction=task_instruction
         )
 
+        current_max_steps = max_steps if max_steps is not None else self.max_steps
+
         # 初始状态
         initial_state: AgentState = {
             "messages": initial_messages,
             "step_count": 0,
-            "max_steps": self.max_steps,
+            "max_steps": current_max_steps,
             "agent_name": self.name,
             "success": False,
             "final_answer": None,
@@ -366,7 +380,7 @@ class BaseReActAgent:
             # 设置 recursion_limit 为 max_steps * 3，确保能覆盖 Agent->Tools->Agent 循环
             final_state = await self.graph.ainvoke(
                 initial_state, 
-                config={"recursion_limit": self.max_steps * 3 + 2}
+                config={"recursion_limit": current_max_steps * 3 + 2}
             )
 
             # 提取结果
@@ -393,7 +407,15 @@ class BaseReActAgent:
             # 构建历史记录 (兼容旧格式)
             history = self._extract_history(messages)
 
-            success = final_answer is not None and step_count < self.max_steps
+            # 如果没有找到 final_answer (例如达到最大步数)，构造默认错误返回
+            if final_answer is None:
+                final_answer = {
+                    "content": "Error: Agent failed to produce a final answer (likely max steps reached).",
+                    "error": "no_final_answer",
+                    "step_count": step_count
+                }
+
+            success = final_answer is not None and step_count <= self.max_steps
 
             log_msg("INFO", f"Agent '{self.name}' 任务完成, 步数: {step_count}, 成功: {success}")
 
@@ -461,7 +483,8 @@ class BaseReActAgent:
                 "agent_name": self.name,
             }
 
-        session = await self.run(task_instruction, prompt_context)
+        max_steps = state.get("max_steps")
+        session = await self.run(task_instruction, prompt_context, max_steps=max_steps)
 
         return {
             "agent_output": session.final_answer,

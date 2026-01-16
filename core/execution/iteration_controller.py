@@ -1,6 +1,9 @@
 import os
 import shutil
 import zipfile
+import os
+import shutil
+import zipfile
 import asyncio
 import time
 import json
@@ -14,6 +17,8 @@ from core.agent.base_agent import BaseReActAgent
 from core.execution.journal import Journal, Node
 from core.execution.task_class import Task
 from core.agent.prompt_manager import PromptContext
+from core.evolution.gene_selector import select_gene_plan
+from core.evolution.gene_registry import GeneRegistry
 from core.evolution.gene_selector import select_gene_plan
 from core.evolution.gene_registry import GeneRegistry
 from utils.logger_system import log_msg
@@ -66,6 +71,7 @@ class IterationController:
         config: Any,
         competition_description: str = "",
         conda_packages: str = ""
+
     ):
         self.agent_pool = agent_pool
         self.task_pipeline = task_pipeline
@@ -76,7 +82,7 @@ class IterationController:
 
         self.current_epoch = 0
         self.start_time = time.time()
-
+        
         # Gene Selection
         self.use_pheromone_gene_selection = config.use_pheromone_gene_selection
         self.gene_registry = GeneRegistry()
@@ -107,7 +113,6 @@ class IterationController:
             llm=self.llm,
             prompt_manager=self.prompt_manager,
             learning_threshold=getattr(self.config, 'learning_threshold', 0.1),
-            min_episodes=getattr(self.config, 'min_learning_episodes', 3),
             storage_dir=os.path.join(self.config.mle_bench_workspace_dir, "prompt_learning")
         ) if self.llm and self.prompt_manager else None
 
@@ -295,8 +300,6 @@ class IterationController:
         Returns:
             包含 prompt_context 和 task_description 的字典
         """
-        task_type = task['type']
-        task_id = task['id']
 
         # 构建Prompt上下文
         prompt_context = self._construct_prompt_context(task)
@@ -577,6 +580,7 @@ class IterationController:
                         payload['parent_code'] = parent_node.code
                         payload['parent_feedback'] = parent_node.summary
                         # logs 对应模板中的 parent_history
+                        payload['parent_history'] = parent_node.logs
                         payload['parent_history'] = parent_node.logs
                         payload['parent_score'] = parent_node.score
 
@@ -868,12 +872,9 @@ class IterationController:
             return
 
         # 第二阶段: 检查是否达到反思条件
-        if not self.version_manager.should_trigger_reflection(
-            agent_name, task_type, threshold=self.REFLECTION_TRIGGER_THRESHOLD
-        ):
-            return
-
         usage_count = self.version_manager.get_current_prompt_usage_count(agent_name, task_type)
+        if usage_count < self.REFLECTION_TRIGGER_THRESHOLD:
+            return
         log_msg("INFO", f"检查学习/反思流程: {task_type} 任务当前prompt已使用 {usage_count} 次")
 
         # 获取当前版本的综合评分
@@ -883,7 +884,6 @@ class IterationController:
             return
 
         composite_score = current_version.composite_score
-
         log_msg("INFO", f"{agent_name} 的 {task_type} prompt综合评分: {composite_score:.3f} (阈值: {self.SCORE_THRESHOLD})")
 
         # 根据评分决定学习还是反思
@@ -893,7 +893,7 @@ class IterationController:
             await self._run_learning_for_agent(agent_name, task_type)
         else:
             # 评分较高，触发反思-生成流程
-            log_msg("INFO", f"评分高于阈值，触发反思流程: {agent.name} 进行自我反思和改进")
+            log_msg("INFO", f"评分高于阈值，触发反思流程: {agent_name} 进行自我反思和改进")
             await self._run_reflection_generation(agent_name, task_type)
 
     async def _run_learning_for_agent(
@@ -903,7 +903,6 @@ class IterationController:
     ):
         """
         为特定agent执行学习流程
-
         当agent的综合评分低于阈值时，向分数最高的agent学习prompt
 
         参数:
@@ -932,7 +931,7 @@ class IterationController:
                 return
 
             # 选择最佳候选（分数差距最大的）
-            best_candidate = self.learner.select_best_learning_candidate(student_candidates)
+            best_candidate = student_candidates[0] 
 
             if not best_candidate:
                 log_msg("WARNING", f"无法为 {agent_name} 选择学习候选")
@@ -947,8 +946,6 @@ class IterationController:
 
             if learning_result.success:
                 log_msg("INFO", f"Prompt学习成功: {learning_result.reasoning}")
-
-                # 更新版本管理器中的当前版本（已在execute_learning中处理）
             else:
                 log_msg("WARNING", f"Prompt学习失败: {learning_result.error}")
 
@@ -963,7 +960,6 @@ class IterationController:
     ):
         """
         为特定agent执行反思-生成流程
-
         当agent的综合评分高于阈值时，进行自我反思和改进
 
         参数:
@@ -987,23 +983,13 @@ class IterationController:
                           f"生成率={reflection_result['metrics']['avg_generation_rate']:.2f}, "
                           f"综合评分={reflection_result['metrics']['composite_score']:.3f}")
 
-            # 第三阶段: 提取反思建议和guidance
-            reflection_data = reflection_result.get('reflection', {})
-            suggestions = reflection_data.get('suggestions', [])
-            analysis = reflection_data.get('analysis', '')
-
-            # 组合guidance
-            guidance = analysis
-            if suggestions:
-                guidance += "\n\n改进建议:\n" + "\n".join(f"- {s}" for s in suggestions)
-
-            # 更新当前版本的guidance
-            await self.version_manager.update_version_guidance(
+            # 第三阶段: 更新当前版本的reflection
+            await self.version_manager.update_version_reflection(
                 agent_name=agent_name,
                 version_id=current_version.version_id,
-                guidance=guidance
+                reflection=reflection_result.get('reflection', {})
             )
-            log_msg("INFO", f"已更新版本guidance: {current_version.version_id}")
+            log_msg("INFO", f"已更新版本reflection: {current_version.version_id}")
 
             # 第四阶段: 使用生成器生成新prompt
             current_prompt = current_version.prompt_content
@@ -1011,8 +997,7 @@ class IterationController:
                 agent_name=agent_name,
                 prompt_type=task_type,
                 current_prompt=current_prompt,
-                suggestions=suggestions,
-                analysis=analysis
+                reflection=reflection_result.get('reflection', {})
             )
 
             if not generation_result.success:
@@ -1039,7 +1024,6 @@ class IterationController:
                     prompt_type=task_type,
                     prompt_content=generation_result.new_prompt,
                     source="generated",
-                    guidance=guidance,
                     previous_version_id=current_version.version_id
                 )
             else:

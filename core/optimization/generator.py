@@ -61,19 +61,17 @@ class PromptGenerator:
         agent_name: str,
         prompt_type: str,
         current_prompt: str,
-        suggestions: List[str],
-        analysis: str,
+        reflection: Dict[str, Any],
         additional_context: Optional[Dict[str, Any]] = None
     ) -> GenerationResult:
         """
-        根据建议生成新版本的prompt
+        根据反思结果生成新版本的prompt
 
         参数:
             agent_name: Agent名称
             prompt_type: prompt类型 ("explore" 或 "merge")
             current_prompt: 当前prompt内容
-            suggestions: 改进建议列表
-            analysis: 反思分析结果
+            reflection: 完整的反思结果（包含diagnosis, suggestions等）
             additional_context: 额外的上下文信息
 
         返回:
@@ -86,8 +84,7 @@ class PromptGenerator:
         messages = self._build_generation_messages(
             prompt_type=prompt_type,
             current_prompt=current_prompt,
-            suggestions=suggestions,
-            analysis=analysis,
+            reflection=reflection,
             additional_context=additional_context or {}
         )
 
@@ -98,12 +95,13 @@ class PromptGenerator:
 
             # 解析生成结果
             generation_result = self._parse_generation_response(
-                response_content, current_prompt, new_version, suggestions
+                response_content, current_prompt, new_version, reflection
             )
 
             return generation_result
 
         except Exception as e:
+            suggestions = reflection.get("suggestions", [])
             return GenerationResult(
                 success=False,
                 new_prompt="",
@@ -111,7 +109,7 @@ class PromptGenerator:
                 changes_made=[],
                 reasoning="",
                 original_prompt=current_prompt,
-                suggestions_used=suggestions,
+                suggestions_used=[s.get("proposal", str(s)) for s in suggestions],
                 error=str(e)
             )
 
@@ -145,8 +143,7 @@ class PromptGenerator:
         self,
         prompt_type: str,
         current_prompt: str,
-        suggestions: List[str],
-        analysis: str,
+        reflection: Dict[str, Any],
         additional_context: Dict[str, Any]
     ) -> List:
         """
@@ -159,15 +156,14 @@ class PromptGenerator:
         template_vars = {
             "prompt_type": prompt_type,
             "current_prompt": current_prompt,
-            "suggestions": suggestions,
-            "analysis": analysis,
+            "reflection": reflection,
             "additional_context": additional_context
         }
 
         return MessageBuilder.build_llm_messages(
             template_content=template_content,
             template_vars=template_vars,
-            human_message="请根据以上分析建议，生成改进后的prompt版本。"
+            human_message="请根据以上反思分析，生成改进后的prompt版本。"
         )
 
     def _parse_generation_response(
@@ -175,12 +171,14 @@ class PromptGenerator:
         response_content: str,
         original_prompt: str,
         version: str,
-        suggestions: List[str]
+        reflection: Dict[str, Any]
     ) -> GenerationResult:
         """
         解析LLM的生成响应
         """
         data = LLMResponseParser.extract_json_from_response(response_content)
+
+        suggestions = reflection.get("suggestions", [])
 
         if data:
             return GenerationResult(
@@ -190,7 +188,7 @@ class PromptGenerator:
                 changes_made=data.get("changes_made", []),
                 reasoning=data.get("reasoning", ""),
                 original_prompt=original_prompt,
-                suggestions_used=suggestions
+                suggestions_used=[s.get("proposal", str(s)) for s in suggestions]
             )
         else:
             # 如果JSON解析失败，尝试提取文本内容
@@ -199,9 +197,9 @@ class PromptGenerator:
                 new_prompt=response_content,
                 version=version,
                 changes_made=["基于LLM直接生成"],
-                reasoning="根据分析建议生成新版本",
+                reasoning="根据反思分析生成新版本",
                 original_prompt=original_prompt,
-                suggestions_used=suggestions,
+                suggestions_used=[s.get("proposal", str(s)) for s in suggestions],
                 parse_error="JSON解析失败"
             )
 

@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any, Set
 from collections import deque
 import re
 import ast
+from utils.logger_system import log_msg
 
 @dataclass
 class Node:
@@ -26,6 +27,7 @@ class Node:
     score: Optional[float] = None
     is_buggy: bool = False
     submission_created: bool = False
+    archive_path: Optional[str] = None # Path to the zipped solution/submission archive
     
     # Execution context
     logs: str = ""
@@ -69,6 +71,8 @@ class Journal:
     def __init__(self):
         self.nodes: Dict[str, Node] = {}
         self.root_id: Optional[str] = None
+        self.score_min: Optional[float] = None
+        self.score_max: Optional[float] = None
 
     def add_node(self, node: Node) -> None:
         """Adds a new node to the journal and updates graph connections."""
@@ -89,12 +93,16 @@ class Journal:
         return self.nodes.get(node_id)
 
     def get_best_node(self) -> Optional[Node]:
-        """Returns the node with the highest score."""
+        """
+        返回得分最高的节点。
+
+        Returns:
+            Optional[Node]: 得分最高的节点，若没有有效节点则返回None
+        """
         valid_nodes = [n for n in self.nodes.values() if n.score is not None and not n.is_buggy]
         if not valid_nodes:
             return None
-        # Assuming higher score is better.
-        return max(valid_nodes, key=lambda n: n.score)
+        return max(valid_nodes, key=lambda n: n.score if n.score is not None else 0.0)
 
     def get_leaf_nodes(self) -> List[Node]:
         """Returns all nodes that have no children."""
@@ -167,19 +175,43 @@ class Journal:
         """Saves the entire journal to a JSON file."""
         data = {
             "root_id": self.root_id,
-            "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()}
+            "nodes": {nid: node.to_dict() for nid, node in self.nodes.items()},
+            "score_min": self.score_min,
+            "score_max": self.score_max,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
     @classmethod
     def load_from_file(cls, path: str) -> 'Journal':
-        """Loads the journal from a JSON file."""
+        """
+        从JSON文件加载Journal对象。
+
+        Args:
+            path: JSON文件路径
+
+        Returns:
+            Journal: 加载的Journal对象
+        """
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
+
         journal = cls()
         journal.root_id = data.get("root_id")
+
+        if "score_min" not in data:
+            log_msg("ERROR", "加载的Journal文件缺少score_min字段，无法加载。请使用包含完整score信息的文件")
+        if "score_max" not in data:
+            log_msg("ERROR", "加载的Journal文件缺少score_max字段，无法加载。请使用包含完整score信息的文件")
+
+        journal.score_min = data["score_min"]
+        journal.score_max = data["score_max"]
+
+        if journal.score_min is None:
+            log_msg("ERROR", "score_min为None，无法加载。请确保Journal文件包含有效的score信息")
+        if journal.score_max is None:
+            log_msg("ERROR", "score_max为None，无法加载。请确保Journal文件包含有效的score信息")
+
         for nid, node_data in data.get("nodes", {}).items():
             journal.nodes[nid] = Node.from_dict(node_data)
         return journal

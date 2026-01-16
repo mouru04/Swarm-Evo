@@ -70,7 +70,6 @@ class PromptLearner:
         llm: BaseChatModel,
         prompt_manager: Any,
         learning_threshold: float = 0.1,     # 学习阈值（分数差距）
-        min_episodes: int = 3,                # 最少执行次数才开始学习
         storage_dir: str = "workspace/prompt_learning"
     ):
         """
@@ -81,14 +80,12 @@ class PromptLearner:
             llm: LangChain语言模型
             prompt_manager: Prompt管理器
             learning_threshold: 学习阈值（分数差距超过此值才学习）
-            min_episodes: 最少执行次数才开始学习
             storage_dir: 学习历史存储目录
         """
         self.version_manager = version_manager
         self.llm = llm
         self.prompt_manager = prompt_manager
         self.learning_threshold = learning_threshold
-        self.min_episodes = min_episodes
 
         # 存储目录
         self.storage_dir = Path(storage_dir)
@@ -115,13 +112,13 @@ class PromptLearner:
             学习候选对列表，按分数差距降序排序
         """
         # 获取所有Agent名称
-        all_agent_names = self.version_manager.get_all_agent_names()
+        all_agent_names = list(self.version_manager.agent_records.keys())
 
         # 过滤掉没有当前版本的Agent
         eligible_agents = []
         for agent_name in all_agent_names:
             current_prompt = self.version_manager.get_current_prompt(agent_name, prompt_type)
-            if current_prompt and current_prompt.used_count >= self.min_episodes:
+            if current_prompt:
                 eligible_agents.append(agent_name)
 
         if len(eligible_agents) < min_agents:
@@ -177,26 +174,6 @@ class PromptLearner:
 
         return candidates
 
-    def select_best_learning_candidate(
-        self,
-        candidates: List[LearningCandidate]
-    ) -> Optional[LearningCandidate]:
-        """
-        从候选对中选择最佳学习对象
-
-        策略：选择分数差距最大的候选对
-
-        参数:
-            candidates: 学习候选对列表
-
-        返回:
-            最佳学习候选，如果没有则返回None
-        """
-        if not candidates:
-            return None
-
-        return candidates[0]  # 已排序，第一个就是最佳
-
     async def execute_learning(
         self,
         candidate: LearningCandidate
@@ -240,18 +217,22 @@ class PromptLearner:
             # 记录新版本到version_manager
             new_version_id = f"{candidate.prompt_type}_learned_from_{candidate.teacher_agent}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
+            # 构建crossover_source（只有当teacher_prompt_id存在时）
+            crossover_source = None
+            if candidate.teacher_prompt_id:
+                crossover_source = {
+                    "agent": candidate.teacher_agent,
+                    "version_id": candidate.teacher_prompt_id
+                }
+
             await self.version_manager.record_prompt_version(
                 agent_name=candidate.student_agent,
                 version_id=new_version_id,
                 prompt_type=candidate.prompt_type,
                 prompt_content=new_prompt_content,
                 source="learned",
-                guidance=f"从 {candidate.teacher_agent} 学习\n\n生成理由: {reasoning}",
                 previous_version_id=candidate.student_prompt_id,
-                crossover_source={
-                    "agent": candidate.teacher_agent,
-                    "version_id": candidate.teacher_prompt_id
-                }
+                crossover_source=crossover_source
             )
 
             # 创建学习结果
@@ -317,8 +298,8 @@ class PromptLearner:
             "score_gap": candidate.score_gap,
             "student_prompt": candidate.student_version.prompt_content if candidate.student_version else "",
             "teacher_prompt": candidate.teacher_version.prompt_content,
-            "student_guidance": candidate.student_version.guidance if candidate.student_version else "",
-            "teacher_guidance": candidate.teacher_version.guidance if candidate.teacher_version else "",
+            "student_reflection": candidate.student_version.reflection if candidate.student_version else None,
+            "teacher_reflection": candidate.teacher_version.reflection if candidate.teacher_version else None,
             "student_metrics": {
                 "avg_accuracy": candidate.student_version.avg_accuracy if candidate.student_version else 0.0,
                 "avg_generation_rate": candidate.student_version.avg_generation_rate if candidate.student_version else 0.0,

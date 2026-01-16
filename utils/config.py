@@ -80,6 +80,7 @@ class Config:
         self.random_seed = self._get_required_int_env('RANDOM_SEED')
         self.max_concurrent_agents = self._get_optional_int_env('MAX_CONCURRENT_AGENTS', 1)
         self.agent_timeout = self._get_required_int_env('AGENT_TIMEOUT')
+        self.max_retries = self._get_required_int_env('MAX_RETRIES')
         self.agent_num = self._get_required_int_env('AGENT_NUM')
         self.agent_config_dir = self._get_required_env('AGENT_CONFIG_DIR')
 
@@ -99,6 +100,11 @@ class Config:
         self.init_task_num = self._get_required_int_env('INIT_TASK_NUM')
         self.explore_ratio = self._get_required_float_env('EXPLORE_RATIO')
         self.epoch_task_num = self._get_required_int_env('EPOCH_TASK_NUM')
+
+        # 第七阶段：进化策略配置（可插拔，指定1/默认为1，指定0则为0）
+        self.use_pheromone_gene_selection = self._get_optional_int_env(
+            "USE_PHEROMONE_GENE_SELECTION", 1
+        ) == 1
 
         self._initialized = True
 
@@ -196,7 +202,9 @@ class Config:
         """
         return OpenAI(
             api_key=self.api_key,
-            base_url=self.api_base
+            base_url=self.api_base,
+            timeout=self.agent_timeout,
+            max_retries=self.max_retries
         )
 
     def create_langchain_llm(self):
@@ -218,6 +226,8 @@ class Config:
             api_key=self.api_key,
             base_url=self.api_base,
             temperature=0.2,
+            request_timeout=self.agent_timeout,
+            max_retries=self.max_retries,
         )
 
 

@@ -6,6 +6,8 @@
 tests/
 dataset/
 workspace/
+archives/
+*.pth
 
 # Python
 __pycache__/
@@ -18,5 +20,4 @@ env/
 .env
 
 # Project specific
-CLAUDE.md
 .agent/

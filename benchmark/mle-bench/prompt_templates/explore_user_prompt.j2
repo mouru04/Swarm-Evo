@@ -17,6 +17,7 @@ Your goal is to achieve the best possible score on the machine learning task des
 
 # Current Workspace Structure
 The tree below shows the content of `{{ workspace_root }}`. Use this to locate data files and understand where to save outputs.
+Note: This tree is up-to-date. You can rely on it for file locations.
 {{ directory_tree }}
 
 # Important File Previews
@@ -62,6 +63,11 @@ On failure, tools return ErrorInfo(...).
 2. **Native Tool Calling**: Do NOT output JSON for actions. Simply call the tools provided to you.
 3. **Completion**: When you have completed the task (submission.csv exists and solution verified), respond with a final natural language summary.
 4. **No Idle Chat**: Do not output text without a tool call unless you are finishing the task.
+
+# Strategic Guidances
+- **Quick Start**: Explore the data briefly (1-2 steps), then write your initial solution.
+- **Baseline Before Optimization**: Get a working model first, then improve iteratively.
+- **Fast Iteration**: Write → Run → Validate → Refine. Each cycle should take 2-3 steps.
 
 # Task Goal
 {{ task_description }}
@@ -110,7 +116,7 @@ Please draft an initial solution for the task goal.
 **CRITICAL: Strict Structure Requirement**
 You MUST implement the code following the EXACT structure below. 
 The system uses the `[SECTION: ...]` tags to parse your code, so DO NOT modify the tags or function signatures.
-If device has GPU, you MUST use it.
+If device has GPU, you MUST use it. You MUST explicitly check for CUDA availability.
 
 <required_structure_reference>
 ```python
@@ -146,6 +152,7 @@ class TrainerConfig:
 
 # [SECTION: MAIN_LOOP]
 if __name__ == "__main__":
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     pass
 ```
 </required_structure_reference>

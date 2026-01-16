@@ -79,7 +79,7 @@ class PromptVersionRecord:
     avg_accuracy: float = 0.0                           # 平均准确率
 
     # 反思相关信息
-    guidance: str = ""                                   # 反思器生成的改进建议（包含分析、建议、优先级等）
+    reflection: Optional[Dict[str, Any]] = None          # 完整的反思结果（包含diagnosis, suggestions等）
     previous_version_id: Optional[str] = None            # 前一个版本ID
 
     # 交叉来源信息（用于学习器）
@@ -229,7 +229,6 @@ class AgentVersionManager:
         prompt_type: str,
         prompt_content: str,
         source: str = "generated",
-        guidance: str = "",
         previous_version_id: Optional[str] = None,
         crossover_source: Optional[Dict[str, str]] = None
     ) -> PromptVersionRecord:
@@ -242,7 +241,6 @@ class AgentVersionManager:
             prompt_type: prompt类型 (explore/merge)
             prompt_content: prompt内容
             source: 版本来源 (initial/generated/manual/learned)
-            guidance: 反思建议内容（包含分析、建议、优先级等）
             previous_version_id: 前一个版本ID
             crossover_source: 交叉来源信息 {"agent": "agent_1", "version_id": "explore_v2"}
 
@@ -260,7 +258,6 @@ class AgentVersionManager:
                 prompt_content=prompt_content,
                 created_at=datetime.now().isoformat(),
                 source=source,
-                guidance=guidance,
                 previous_version_id=previous_version_id,
                 crossover_source=crossover_source
             )
@@ -520,19 +517,19 @@ class AgentVersionManager:
         # 计算has_submission（任一为true则为true）
         task_record.has_submission = any(nm.has_submission for nm in task_record.node_metadata)
 
-    async def update_version_guidance(
+    async def update_version_reflection(
         self,
         agent_name: str,
         version_id: str,
-        guidance: str
+        reflection: Dict[str, Any]
     ) -> bool:
         """
-        更新版本的guidance（反思建议）
+        更新版本的reflection（完整反思结果）
 
         参数:
             agent_name: Agent名称
             version_id: 版本ID
-            guidance: 反思建议内容
+            reflection: 完整的反思结果
 
         返回:
             是否成功更新
@@ -544,7 +541,7 @@ class AgentVersionManager:
 
             for version in agent_record.prompt_versions:
                 if version.version_id == version_id:
-                    version.guidance = guidance
+                    version.reflection = reflection
                     agent_record.last_updated = datetime.now().isoformat()
                     self._save_agent_record(agent_name)
                     return True
@@ -605,35 +602,6 @@ class AgentVersionManager:
             return 0
 
         return current_version.used_count
-
-    def should_trigger_reflection(
-        self,
-        agent_name: str,
-        prompt_type: str,
-        threshold: int = 5
-    ) -> bool:
-        """
-        检查是否应该触发反思
-
-        参数:
-            agent_name: Agent名称
-            prompt_type: prompt类型 (explore/merge)
-            threshold: 触发反思的使用次数阈值
-
-        返回:
-            是否应该触发反思
-        """
-        usage_count = self.get_current_prompt_usage_count(agent_name, prompt_type)
-        return usage_count >= threshold
-
-    def get_all_agent_names(self) -> List[str]:
-        """
-        获取所有Agent的名称列表
-
-        返回:
-            Agent名称列表
-        """
-        return list(self.agent_records.keys())
 
     # ==================== 私有辅助方法 ====================
 

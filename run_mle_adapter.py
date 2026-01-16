@@ -165,8 +165,8 @@ Save your predictions to: {submission_dir / "submission.csv"}
     # =========================================
     
     try:
-        llm_client = config.create_llm_client()
-        log_msg("INFO", "LLM 客户端创建成功")
+        llm = config.create_langchain_llm()
+        log_msg("INFO", "LangChain LLM 客户端创建成功")
     except Exception as e:
         log_msg("ERROR", f"LLM 客户端创建失败: {e}")
         return
@@ -199,7 +199,7 @@ Save your predictions to: {submission_dir / "submission.csv"}
         agent_pool = AgentPool.from_configs(
             agents_num=config.agent_num,
             config=agent_config_dict,
-            llm_client=llm_client
+            llm=llm
         )
         log_msg("INFO", f"AgentPool 创建成功，共 {config.agent_num} 个 Agent")
     except Exception as e:
@@ -251,10 +251,22 @@ Save your predictions to: {submission_dir / "submission.csv"}
     submission_file = submission_dir / "submission.csv"
     
     # 1. 检查提交文件
+    # [NEW Logic] 优先尝试从最佳方案恢复
+    try:
+        best_node = journal.get_best_node()
+        if best_node and best_node.archive_path and os.path.exists(best_node.archive_path):
+            log_msg("INFO", f"正在从归档恢复最佳方案: {best_node.archive_path}")
+            import zipfile
+            with zipfile.ZipFile(best_node.archive_path, 'r') as zip_ref:
+                zip_ref.extractall(workspace_dir)
+            log_msg("INFO", "✅ 最佳方案文件已恢复到工作目录")
+    except Exception as e:
+        log_msg("WARNING", f"尝试恢复最佳方案失败: {e}")
+
     if submission_file.exists():
         log_msg("INFO", f"✅ 提交文件存在: {submission_file}")
     else:
-        log_msg("ERROR", "❌ 提交文件未生成!")
+        log_msg("WARNING", "❌ 提交文件未生成! 尝试兜底查找...")
         # 尝试从工作目录查找
         for candidate in workspace_dir.glob("**/submission.csv"):
             try:

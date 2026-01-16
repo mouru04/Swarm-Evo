@@ -1,11 +1,13 @@
 import time
 import uuid
 import random
+import math
 from threading import Lock
 from typing import List, Optional, Dict, Any
 
 from core.execution.task_class import Task
 from core.execution.journal import Journal, Node
+from core.evolution.pheromone import ensure_node_stats, compute_node_pheromone
 from utils.config import get_config
 from utils.logger_system import log_msg
 
@@ -24,6 +26,8 @@ class Pipeline:
         self.temporary_storage: Dict[str, Any] = {}
         self.journal = journal
         self.config = get_config()
+        # NEW: node-level logical time (for recency)
+        self.current_node_step: int = 0
 
     def initialize(self):
         """
@@ -108,21 +112,63 @@ class Pipeline:
         """
         new_tasks = []
         count = self.config.epoch_task_num
-        
-        # [Strategy] 获取当前全局最优节点作为 Parent
-        best_node = self.journal.get_best_node()
-        parent_id = best_node.id if best_node else None
-        
+
         for _ in range(count):
             if random.random() < self.config.explore_ratio:
                 task_type = "explore"
-                # 如果存在最优节点，则注入 parent_id，启用继承模式
+                parent_node = self._select_parent_node_by_pheromone()
+                parent_id = parent_node.id if parent_node else None
                 payload = {"parent_id": parent_id} if parent_id else {}
                 new_tasks.append(self._create_task(task_type, payload))
             else:
-                task_type = "select"
+                task_type = "merge"
                 new_tasks.append(self._create_task(task_type))
         return new_tasks
+
+    def _select_parent_node_by_pheromone(self) -> Optional[Node]:
+        """
+        Selects a parent node using pheromone-based sampling.
+        """
+        valid_nodes = [
+            node for node in self.journal.nodes.values()
+            if node.score is not None and not node.is_buggy
+        ]
+        if not valid_nodes:
+            return None
+
+        current_step = self.current_node_step
+
+
+        score_min = self.journal.score_min
+        score_max = self.journal.score_max
+
+        pheromones = []
+        for node in valid_nodes:
+            ensure_node_stats(node)
+            pheromone = node.metadata.get("pheromone_node")
+            pheromone = compute_node_pheromone(
+                node,
+                current_step=current_step,
+                score_min=score_min,
+                score_max=score_max,
+            )
+            node.metadata["pheromone_node"] = pheromone
+            pheromones.append(pheromone)
+
+        temperature = 3.0
+        logits = [p / temperature for p in pheromones]
+        max_logit = max(logits)
+        weights = [math.exp(l - max_logit) for l in logits]
+        parent_node = random.choices(valid_nodes, weights=weights, k=1)[0]
+
+        ensure_node_stats(parent_node)
+        parent_node.metadata["usage_count"] += 1
+        log_msg(
+            "INFO",
+            f"Selected parent {parent_node.id} with pheromone "
+            f"{parent_node.metadata.get('pheromone_node', 0.0):.4f}",
+        )
+        return parent_node
 
     def reorder_tasks(self):
         """
@@ -164,9 +210,21 @@ class Pipeline:
             if task['type'] in ['explore', 'merge']:
                 if result_nodes:
                     for node in result_nodes:
+                        
+                        # 1. 递增全局 node 时间
+                        self.current_node_step += 1
+
+                        #  2. 在节点创建时写入 node_step
+                        ensure_node_stats(node)
+                        node.metadata["node_step"] = self.current_node_step
                         self.journal.add_node(node)
                         created_node_ids.append(node.id)
+                        
                         log_msg("INFO", f"Pipeline added Node {node.id} for task {task_id}")
+                        log_msg(
+                            "DEBUG",
+                            f"[GENE-DEBUG] Node {node.id[:6]} genes = {list(node.genes.keys())}"
+                        )
             
             elif task['type'] == 'review':
                 if update_data:
@@ -177,8 +235,32 @@ class Pipeline:
                             node.score = update_data.get('score')
                             node.summary = update_data.get('summary', "")
                             node.is_buggy = update_data.get('is_bug', False)
+                            if node.metadata is None:
+                                node.metadata = {}
                             node.metadata['review_success'] = update_data.get('agent_success', False)
+                            ensure_node_stats(node)
+                            success = node.score is not None and not node.is_buggy
+                            if success:
+                                if self.journal.score_min is None or node.score < self.journal.score_min:
+                                    self.journal.score_min = node.score
+                                if self.journal.score_max is None or node.score > self.journal.score_max:
+                                    self.journal.score_max = node.score
+                            current_step = self.current_node_step
+                            node.metadata["pheromone_node"] = compute_node_pheromone(
+                                node,
+                                current_step=current_step,
+                                score_min=self.journal.score_min,
+                                score_max=self.journal.score_max,
+                            )
+                            if success:
+                                for pid in node.parent_ids:
+                                    parent = self.journal.get_node(pid)
+                                    if not parent:
+                                        continue
+                                    ensure_node_stats(parent)
+                                    parent.metadata["success_count"] += 1
                             log_msg("INFO", f"Pipeline updated Node {target_id} with score {node.score}")
+                            log_msg("INFO",f"[PHEROMONE-UPDATE] Node={node.id[:6]} "f"score={node.score} "f"pheromone={node.metadata.get('pheromone_node'):.4f}")
                         else:
                             log_msg("WARNING", f"Review target node {target_id} not found.")
  
@@ -200,9 +282,6 @@ class Pipeline:
                     log_msg("WARNING", "Explore task completed without any result nodes. Skipping Review.")
                     return
 
-            elif task['type'] == 'select':
-                # Select -> Merge logic remains in Controller for now.
-                pass 
 
             elif task['type'] == 'merge':
                 next_task_type = 'review'
