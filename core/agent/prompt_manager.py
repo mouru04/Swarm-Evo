@@ -38,6 +38,7 @@ class PromptContext:
     remaining_seconds: float
     conda_packages: str
     task_description: str
+    step_limit: Optional[int] = None
 
     # ========== 控制字段 ==========
     # 决定使用哪个模板，如 "explore_user_prompt.j2"
@@ -245,6 +246,7 @@ class PromptManager:
             "total_time": total_time,
             "iteration": context.iteration,
             "total_iterations": context.total_iterations,
+            "step_limit": context.step_limit,
             "conda_packages": context.conda_packages.strip(),
             "device_info": device_info,
             "directory_tree": directory_tree,

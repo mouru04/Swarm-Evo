@@ -11,6 +11,7 @@ Your goal is to achieve the best possible score on the machine learning task des
 # Execution Environment
 - **Time**: {{ elapsed }} elapsed, {{ remaining }} remaining (Total: {{ total_time }}).
 - **Iteration**: {{ iteration }} / {{ total_iterations }}
+- **Step Limit**: You have a maximum of {{ step_limit }} steps.
 - **Conda Packages**:
 {{ conda_packages }}
 
@@ -32,6 +33,7 @@ You must rely ONLY on these logs to make a judgement.
 ```
 
 ---
+
 
 # Evaluation Instruction (IMPORTANT)
 
@@ -89,8 +91,8 @@ You MUST give a CRITICAL WARNING in the summary:
 
 # Instructions & Output Format
 
-1. **Analyze**: Review the provided code and execution logs carefully.
-2. **Evaluate**: Determine a score, summary, and bug status based on the logs.
+1. **Analyze**: Rely ONLY on the provided code and execution logs.
+2. **Evaluate**: Determine a score, summary, and bug status.
 3. **Output**: Respond with the `EvaluationResult` JSON object directly. Do not wrap it in `ActionStep`.
 
 ```json

@@ -135,7 +135,8 @@ async def main_mle_bench_competition() -> None:
             task_pipeline=pipeline,
             journal=journal,
             config=config,
-            competition_description=description_content
+            competition_description=description_content,
+            conda_packages=conda_packages
         )
 
         # 4. 运行
